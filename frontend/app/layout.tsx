@@ -5,20 +5,20 @@ import "./globals.css"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "MapCanvas - Maps in seconds. No GIS skills needed.",
+  title: "Spatix - Maps in seconds. No GIS skills needed.",
   description: "Drop any file → instant beautiful map → style → share. The easiest way to create and share maps.",
   keywords: ["maps", "GIS", "geojson", "mapping", "visualization", "data visualization"],
-  authors: [{ name: "MapCanvas" }],
+  authors: [{ name: "Spatix" }],
   openGraph: {
-    title: "MapCanvas - Maps in seconds",
+    title: "Spatix - Maps in seconds",
     description: "Drop any file → instant beautiful map → style → share",
-    url: "https://mapcanvas.io",
-    siteName: "MapCanvas",
+    url: "https://spatix.io",
+    siteName: "Spatix",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "MapCanvas - Maps in seconds",
+    title: "Spatix - Maps in seconds",
     description: "Drop any file → instant beautiful map → style → share",
   },
 }
