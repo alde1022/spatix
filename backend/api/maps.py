@@ -361,7 +361,7 @@ async def create_map(request: Request, body: MapRequest):
             "public": True
         }
         
-        base_url = "https://mapcanvas.io"
+        base_url = "https://spatix.io"
         map_url = f"{base_url}/m/{map_id}"
         
         return MapResponse(
