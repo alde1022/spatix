@@ -12,8 +12,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy ALL application code including subdirectories
+COPY . /app/
 
-# Railway uses PORT env var
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# List files for debugging
+RUN ls -la /app/ && ls -la /app/api/
+
+# Railway provides PORT env var
+ENV PORT=8000
+EXPOSE 8000
+
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT
