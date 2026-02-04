@@ -4,7 +4,22 @@ import Link from "next/link"
 
 export default function DevelopersPage() {
   return (
-    <div className="bg-gradient-to-b from-slate-50 to-white min-h-screen">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+      {/* Top Nav */}
+      <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
+            <span className="text-white text-xl">🗺️</span>
+          </div>
+          <span className="font-bold text-xl text-slate-900">Spatix</span>
+        </Link>
+        <div className="flex items-center gap-6">
+          <Link href="/developers" className="text-brand-600 text-sm font-medium">Developers</Link>
+          <Link href="/pricing" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Pricing</Link>
+          <button className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">Sign In</button>
+        </div>
+      </nav>
+
       {/* Hero */}
       <header className="bg-slate-900 text-white py-16">
         <div className="max-w-4xl mx-auto px-4 text-center">
@@ -27,7 +42,7 @@ export default function DevelopersPage() {
         </div>
       </header>
 
-      {/* Nav */}
+      {/* Sticky Nav */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4">
           <ul className="flex gap-6 py-4 text-sm overflow-x-auto">
@@ -35,7 +50,7 @@ export default function DevelopersPage() {
             <li><a href="#authentication" className="text-slate-600 hover:text-brand-600">Authentication</a></li>
             <li><a href="#create-map" className="text-slate-600 hover:text-brand-600">Create Map</a></li>
             <li><a href="#get-map" className="text-slate-600 hover:text-brand-600">Get Map</a></li>
-            <li><a href="#data-formats" className="text-slate-600 hover:text-brand-600">Data Formats</a></li>
+            <li><a href="#formats" className="text-slate-600 hover:text-brand-600">Formats</a></li>
             <li><a href="#examples" className="text-slate-600 hover:text-brand-600">Examples</a></li>
           </ul>
         </div>
@@ -49,16 +64,14 @@ export default function DevelopersPage() {
             Create a map with a single POST request. No complex setup required.
           </p>
           <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto">
-            <pre className="text-sm"><code>{`curl -X POST https://api.spatix.io/map \\
+            <pre className="text-sm"><code>{`curl -X POST https://api.spatix.io/api/map \\
   -H "Content-Type: application/json" \\
   -d '{
     "data": {"type": "Point", "coordinates": [-122.4194, 37.7749]},
     "title": "San Francisco"
   }'`}</code></pre>
           </div>
-          <p className="text-slate-600 mt-4">
-            Response:
-          </p>
+          <p className="text-slate-600 mt-4">Response:</p>
           <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto mt-2">
             <pre className="text-sm"><code>{`{
   "success": true,
@@ -79,257 +92,136 @@ export default function DevelopersPage() {
             <p className="text-slate-700 mb-4">
               <strong>Pro/Team:</strong> Use the <code className="bg-slate-100 px-2 py-1 rounded text-sm">X-API-Key</code> header.
             </p>
-            <div className="bg-slate-50 p-4 rounded-lg">
-              <code className="text-sm font-mono">X-API-Key: mc_xxxxxxxxxxxxx</code>
+            <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
+              <pre className="text-sm"><code>{`curl -X POST https://api.spatix.io/api/map \\
+  -H "X-API-Key: your_api_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{"data": {...}}'`}</code></pre>
             </div>
-          </div>
-          <div className="mt-4 p-4 bg-brand-50 border border-brand-200 rounded-xl">
-            <p className="text-brand-800 text-sm">
-              <strong>Base URL:</strong> <code className="bg-brand-100 px-2 py-1 rounded">https://api.spatix.io</code>
-            </p>
           </div>
         </section>
 
         {/* Create Map */}
         <section id="create-map" className="mb-16">
           <h2 className="text-2xl font-bold mb-6">Create Map</h2>
-          
           <div className="bg-white border border-slate-200 rounded-xl p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="bg-green-100 text-green-700 px-3 py-1 rounded text-sm font-mono font-bold">POST</span>
-              <code className="text-lg">/map</code>
-            </div>
-            <p className="text-slate-600 mb-6">Create an interactive map from geographic data.</p>
-            
-            <h4 className="font-semibold mb-3">Request Body</h4>
-            <table className="w-full text-sm mb-6">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="text-left py-2 px-3 font-semibold">Field</th>
-                  <th className="text-left py-2 px-3 font-semibold">Type</th>
-                  <th className="text-left py-2 px-3 font-semibold">Description</th>
+            <p className="text-slate-700 font-mono mb-4">POST /api/map</p>
+            <h3 className="font-semibold mb-2">Request Body</h3>
+            <table className="w-full text-sm mb-4">
+              <thead>
+                <tr className="text-left border-b">
+                  <th className="py-2">Field</th>
+                  <th className="py-2">Type</th>
+                  <th className="py-2">Description</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-t border-slate-100">
-                  <td className="py-2 px-3 font-mono text-brand-600">data*</td>
-                  <td className="py-2 px-3 text-slate-600">object | array | string</td>
-                  <td className="py-2 px-3 text-slate-600">GeoJSON, coordinates, or WKT</td>
+                <tr className="border-b">
+                  <td className="py-2 font-mono">data</td>
+                  <td className="py-2">object</td>
+                  <td className="py-2">GeoJSON, coordinates, or geometry</td>
                 </tr>
-                <tr className="border-t border-slate-100">
-                  <td className="py-2 px-3 font-mono">title</td>
-                  <td className="py-2 px-3 text-slate-600">string</td>
-                  <td className="py-2 px-3 text-slate-600">Map title</td>
+                <tr className="border-b">
+                  <td className="py-2 font-mono">title</td>
+                  <td className="py-2">string</td>
+                  <td className="py-2">Optional map title</td>
                 </tr>
-                <tr className="border-t border-slate-100">
-                  <td className="py-2 px-3 font-mono">description</td>
-                  <td className="py-2 px-3 text-slate-600">string</td>
-                  <td className="py-2 px-3 text-slate-600">Map description</td>
-                </tr>
-                <tr className="border-t border-slate-100">
-                  <td className="py-2 px-3 font-mono">style</td>
-                  <td className="py-2 px-3 text-slate-600">string</td>
-                  <td className="py-2 px-3 text-slate-600">"light" | "dark" | "satellite" | "auto"</td>
-                </tr>
-                <tr className="border-t border-slate-100">
-                  <td className="py-2 px-3 font-mono">markers</td>
-                  <td className="py-2 px-3 text-slate-600">array</td>
-                  <td className="py-2 px-3 text-slate-600">Array of {`{lat, lng, label?, color?}`}</td>
+                <tr className="border-b">
+                  <td className="py-2 font-mono">style</td>
+                  <td className="py-2">string</td>
+                  <td className="py-2">light, dark, satellite, streets</td>
                 </tr>
               </tbody>
             </table>
-
-            <h4 className="font-semibold mb-3">Response</h4>
-            <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
-              <pre className="text-sm"><code>{`{
-  "success": true,
-  "id": "abc123",
-  "url": "https://spatix.io/m/abc123",
-  "embed": "<iframe src='...' width='600' height='400'></iframe>",
-  "preview_url": "https://spatix.io/api/map/abc123/preview.png"
-}`}</code></pre>
-            </div>
           </div>
         </section>
 
         {/* Get Map */}
         <section id="get-map" className="mb-16">
           <h2 className="text-2xl font-bold mb-6">Get Map</h2>
-          
           <div className="bg-white border border-slate-200 rounded-xl p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded text-sm font-mono font-bold">GET</span>
-              <code className="text-lg">/map/{`{id}`}</code>
-            </div>
-            <p className="text-slate-600 mb-4">Retrieve map data by ID.</p>
-            
-            <h4 className="font-semibold mb-3">Response</h4>
+            <p className="text-slate-700 font-mono mb-4">GET /api/map/:id</p>
+            <p className="text-slate-600 mb-4">Retrieve map data and metadata.</p>
             <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
-              <pre className="text-sm"><code>{`{
-  "id": "abc123",
-  "title": "My Map",
-  "description": "A cool map",
-  "config": { ... },
-  "created_at": "2025-02-04T12:00:00Z",
-  "views": 42
-}`}</code></pre>
+              <pre className="text-sm"><code>{`curl https://api.spatix.io/api/map/abc123`}</code></pre>
             </div>
           </div>
         </section>
 
-        {/* Data Formats */}
-        <section id="data-formats" className="mb-16">
-          <h2 className="text-2xl font-bold mb-6">Supported Data Formats</h2>
-          <p className="text-slate-600 mb-6">
-            The <code className="bg-slate-100 px-2 py-1 rounded text-sm">data</code> field accepts multiple formats.
-            We auto-detect and normalize to GeoJSON.
-          </p>
-          
-          <div className="space-y-4">
+        {/* Formats */}
+        <section id="formats" className="mb-16">
+          <h2 className="text-2xl font-bold mb-6">Supported Formats</h2>
+          <div className="grid md:grid-cols-2 gap-4">
             <div className="bg-white border border-slate-200 rounded-xl p-6">
-              <h4 className="font-semibold mb-3">GeoJSON</h4>
-              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
-                <pre className="text-sm"><code>{`// FeatureCollection
-{ "type": "FeatureCollection", "features": [...] }
-
-// Single Feature
-{ "type": "Feature", "geometry": {...}, "properties": {...} }
-
-// Raw Geometry
-{ "type": "Point", "coordinates": [-122, 37] }`}</code></pre>
-              </div>
+              <h3 className="font-semibold mb-3">Input Formats</h3>
+              <ul className="text-slate-600 text-sm space-y-1">
+                <li>• GeoJSON (Point, LineString, Polygon, FeatureCollection)</li>
+                <li>• Coordinate arrays [[lng, lat], ...]</li>
+                <li>• Shapefile (.zip)</li>
+                <li>• KML / KMZ</li>
+                <li>• GPX</li>
+                <li>• CSV (with lat/lng columns)</li>
+                <li>• GeoPackage</li>
+              </ul>
             </div>
-
             <div className="bg-white border border-slate-200 rounded-xl p-6">
-              <h4 className="font-semibold mb-3">Coordinate Arrays</h4>
-              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
-                <pre className="text-sm"><code>{`// Single point
-[-122.4194, 37.7749]
-
-// Line or polygon
-[[-122.4, 37.7], [-122.5, 37.8], [-122.3, 37.9]]`}</code></pre>
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl p-6">
-              <h4 className="font-semibold mb-3">WKT Strings</h4>
-              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
-                <pre className="text-sm"><code>{`"POINT(-122.4194 37.7749)"
-"LINESTRING(-122 37, -118 34)"
-"POLYGON((-122 37, -122 38, -121 38, -121 37, -122 37))"`}</code></pre>
-              </div>
+              <h3 className="font-semibold mb-3">Output</h3>
+              <ul className="text-slate-600 text-sm space-y-1">
+                <li>• Shareable URL</li>
+                <li>• Embeddable iframe</li>
+                <li>• PNG preview image</li>
+                <li>• GeoJSON export</li>
+              </ul>
             </div>
           </div>
         </section>
 
         {/* Examples */}
         <section id="examples" className="mb-16">
-          <h2 className="text-2xl font-bold mb-6">Code Examples</h2>
+          <h2 className="text-2xl font-bold mb-6">Examples</h2>
           
-          {/* Python */}
-          <div className="mb-6">
-            <h3 className="font-semibold mb-3">Python</h3>
-            <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto">
-              <pre className="text-sm"><code>{`import requests
-
-response = requests.post(
-    "https://api.spatix.io/map",
-    json={
-        "data": {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [-122.4194, 37.7749]},
-                    "properties": {"name": "San Francisco"}
-                }
-            ]
-        },
-        "title": "My Map",
-        "style": "dark"
-    }
-)
-
-print(response.json()["url"])  # https://spatix.io/m/abc123`}</code></pre>
+          <div className="space-y-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <h3 className="font-semibold mb-3">Multiple Points</h3>
+              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
+                <pre className="text-sm"><code>{`{
+  "data": [
+    [-122.4194, 37.7749],
+    [-118.2437, 34.0522],
+    [-73.9857, 40.7484]
+  ],
+  "title": "US Cities"
+}`}</code></pre>
+              </div>
             </div>
-          </div>
 
-          {/* JavaScript */}
-          <div className="mb-6">
-            <h3 className="font-semibold mb-3">JavaScript</h3>
-            <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto">
-              <pre className="text-sm"><code>{`const response = await fetch("https://api.spatix.io/map", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    data: [[-122.4, 37.7], [-118.2, 34.0]],  // LA to SF line
-    title: "California Route",
-    markers: [
-      { lat: 37.7749, lng: -122.4194, label: "San Francisco" },
-      { lat: 34.0522, lng: -118.2437, label: "Los Angeles" }
-    ]
-  })
-});
-
-const { url } = await response.json();
-console.log(url);  // https://spatix.io/m/abc123`}</code></pre>
-            </div>
-          </div>
-
-          {/* AI Agent Example */}
-          <div>
-            <h3 className="font-semibold mb-3">OpenAI Function Calling</h3>
-            <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto">
-              <pre className="text-sm"><code>{`{
-  "name": "create_map",
-  "description": "Create an interactive map from geographic data",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "data": {
-        "description": "GeoJSON, coordinates, or WKT string"
-      },
-      "title": { "type": "string" },
-      "style": { "enum": ["light", "dark", "satellite"] },
-      "markers": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "lat": { "type": "number" },
-            "lng": { "type": "number" },
-            "label": { "type": "string" }
-          }
-        }
-      }
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <h3 className="font-semibold mb-3">GeoJSON Feature</h3>
+              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
+                <pre className="text-sm"><code>{`{
+  "data": {
+    "type": "Feature",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [[[-122.5, 37.7], [-122.3, 37.7], [-122.3, 37.9], [-122.5, 37.9], [-122.5, 37.7]]]
     },
-    "required": ["data"]
+    "properties": {"name": "SF Bay Area"}
   }
 }`}</code></pre>
+              </div>
             </div>
           </div>
-        </section>
-
-        {/* CTA */}
-        <section className="bg-brand-600 text-white rounded-2xl p-8 text-center">
-          <h2 className="text-2xl font-bold mb-4">Ready to build?</h2>
-          <p className="text-brand-100 mb-6">Start creating maps with our API in minutes.</p>
-          <Link 
-            href="/pricing"
-            className="inline-block px-8 py-3 bg-white text-brand-600 rounded-lg font-medium hover:bg-brand-50 transition-colors"
-          >
-            Get API Key →
-          </Link>
         </section>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-200 mt-12 py-8">
+      <footer className="border-t border-slate-200 py-8">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between text-sm text-slate-500">
           <p>© 2025 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
             <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
+            <a href="https://twitter.com/spatixmaps" className="hover:text-slate-700">Twitter</a>
           </div>
         </div>
       </footer>
