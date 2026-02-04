@@ -6,7 +6,7 @@ const plans = [
     name: "Free",
     price: "$0",
     period: "forever",
-    description: "Perfect for trying out MapCanvas",
+    description: "Perfect for trying out Spatix",
     features: [
       "5 maps per month",
       "Basic styling options",
@@ -25,7 +25,7 @@ const plans = [
       "Unlimited maps",
       "All styling options",
       "Custom domains",
-      "Remove MapCanvas branding",
+      "Remove Spatix branding",
       "API access (500 calls/mo)",
       "Priority support",
     ],
@@ -60,7 +60,7 @@ export default function PricingPage() {
           <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
             <span className="text-white text-xl">🗺️</span>
           </div>
-          <span className="font-bold text-xl text-slate-900">MapCanvas</span>
+          <span className="font-bold text-xl text-slate-900">Spatix</span>
         </Link>
         <div className="flex items-center gap-6">
           <Link href="/developers" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
@@ -174,11 +174,11 @@ export default function PricingPage() {
       {/* Footer */}
       <footer className="border-t border-slate-200 py-8">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between text-sm text-slate-500">
-          <p>© 2025 MapCanvas. All rights reserved.</p>
+          <p>© 2025 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
             <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
-            <a href="https://twitter.com/mapcanvas" className="hover:text-slate-700">Twitter</a>
+            <a href="https://twitter.com/spatix" className="hover:text-slate-700">Twitter</a>
           </div>
         </div>
       </footer>
