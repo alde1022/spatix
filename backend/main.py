@@ -166,7 +166,34 @@ async def analyze(
     temp_dir = tempfile.mkdtemp()
     try:
         file_path = save_upload(file, temp_dir)
-        gdf = gpd.read_file(file_path)
+        # Handle CSV files specially
+        if file_path.lower().endswith(".csv"):
+            import pandas as pd
+            df = pd.read_csv(file_path, low_memory=False)
+            lat_cols = ["LATITUDE", "latitude", "lat", "Latitude", "LAT", "y", "Y"]
+            lng_cols = ["LONGITUDE", "longitude", "lng", "lon", "long", "Longitude", "LNG", "LON", "LONG", "x", "X"]
+            lat_col = next((c for c in lat_cols if c in df.columns), None)
+            lng_col = next((c for c in lng_cols if c in df.columns), None)
+            if lat_col and lng_col:
+                df = df.dropna(subset=[lat_col, lng_col])
+                df = df[pd.to_numeric(df[lat_col], errors="coerce").notna()]
+                df = df[pd.to_numeric(df[lng_col], errors="coerce").notna()]
+                df[lat_col] = pd.to_numeric(df[lat_col])
+                df[lng_col] = pd.to_numeric(df[lng_col])
+                df = df[(df[lat_col] >= -90) & (df[lat_col] <= 90)]
+                df = df[(df[lng_col] >= -180) & (df[lng_col] <= 180)]
+                # Drop columns that might have Inf/NaN issues
+                for col in df.columns:
+                    if df[col].dtype in ['float64', 'float32']:
+                        df[col] = df[col].replace([float('inf'), float('-inf')], None)
+                        df[col] = df[col].where(df[col].notna(), None)
+                if len(df) == 0:
+                    raise HTTPException(status_code=400, detail="No valid coordinates found in CSV")
+                gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lng_col], df[lat_col]), crs="EPSG:4326")
+            else:
+                raise HTTPException(status_code=400, detail=f"CSV needs lat/lng columns. Found: {list(df.columns)[:10]}")
+        else:
+            gdf = gpd.read_file(file_path)
         
         file_size = os.path.getsize(file_path)
         
