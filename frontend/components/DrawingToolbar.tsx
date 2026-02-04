@@ -3,32 +3,38 @@ import React from 'react';
 type Tool = 'select' | 'drawPoint' | 'drawLine' | 'drawPolygon' | 'drawRectangle' | 'addText';
 
 interface DrawingToolbarProps {
-  activeTool: Tool;
-  onSelectTool: (tool: Tool) => void;
+  activeTool: Tool | string | null;
+  onToolChange?: (tool: Tool) => void;
+  onSelectTool?: (tool: Tool) => void;
 }
 
 const tools: { type: Tool; icon: string; label: string }[] = [
   { type: 'select', icon: '🖱️', label: 'Select' },
-  { type: 'drawPoint', icon: '🟢', label: 'Draw Point' },
-  { type: 'drawLine', icon: '🔶', label: 'Draw Line' },
-  { type: 'drawPolygon', icon: '🔷', label: 'Draw Polygon' },
-  { type: 'drawRectangle', icon: '⬛', label: 'Draw Rectangle' },
-  { type: 'addText', icon: '🔤', label: 'Add Text' },
+  { type: 'drawPoint', icon: '📍', label: 'Point' },
+  { type: 'drawLine', icon: '📏', label: 'Line' },
+  { type: 'drawPolygon', icon: '⬡', label: 'Polygon' },
+  { type: 'drawRectangle', icon: '⬜', label: 'Rectangle' },
+  { type: 'addText', icon: '🔤', label: 'Text' },
 ];
 
-const DrawingToolbar: React.FC<DrawingToolbarProps> = ({ activeTool, onSelectTool }) => {
+const DrawingToolbar: React.FC<DrawingToolbarProps> = ({ activeTool, onToolChange, onSelectTool }) => {
+  const handleSelect = onToolChange ?? onSelectTool ?? (() => {});
+  
   return (
-    <div className="flex flex-col bg-gray-800 p-2 rounded-lg shadow-md space-y-2">
+    <div className="absolute top-4 left-4 z-[1000] bg-gray-800 rounded-lg shadow-lg p-2 flex flex-col gap-1">
       {tools.map(({ type, icon, label }) => (
         <button
           key={type}
-          onClick={() => onSelectTool(type)}
-          className={`flex items-center justify-center w-12 h-12 text-xl
-            ${activeTool === type ? 'bg-gray-600' : 'bg-gray-700'}
-            hover:bg-gray-600 text-white rounded-full transition-colors duration-300`}
+          onClick={() => handleSelect(type)}
+          className={`flex items-center gap-2 px-3 py-2 rounded transition-colors ${
+            activeTool === type
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-300 hover:bg-gray-700'
+          }`}
           title={label}
         >
-          {icon}
+          <span className="text-lg">{icon}</span>
+          <span className="text-sm">{label}</span>
         </button>
       ))}
     </div>
