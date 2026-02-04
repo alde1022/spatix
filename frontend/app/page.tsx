@@ -9,6 +9,10 @@ const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
+interface UploadError extends Error {
+  details?: string | null
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null)
   const [geojson, setGeojson] = useState<any>(null)
@@ -48,7 +52,7 @@ export default function Home() {
         } catch {
           errorMessage = "Server error (" + response.status + "): " + response.statusText
         }
-        const err = new Error(errorMessage) as any
+        const err: UploadError = new Error(errorMessage)
         err.details = details
         throw err
       }
@@ -63,13 +67,13 @@ export default function Home() {
       } else {
         throw new Error("Could not generate map preview. The file may not contain valid geographic data.")
       }
-    } catch (err: any) {
+    } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError("Connection failed")
         setErrorDetails("Could not connect to the server. Please check your internet connection and try again.")
       } else if (err instanceof Error) {
         setError(err.message)
-        setErrorDetails(err.details || null)
+        setErrorDetails((err as UploadError).details || null)
       } else {
         setError("An unexpected error occurred")
         setErrorDetails("Please try again or contact support if the problem persists.")
