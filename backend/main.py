@@ -1,5 +1,5 @@
 """
-MapCanvas API
+Spatix API
 Maps in seconds. No GIS skills needed.
 
 FastAPI backend for file processing and map storage.
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title="MapCanvas API",
+    title="Spatix API",
     version="1.0.0",
     description="Maps in seconds. No GIS skills needed.",
     lifespan=lifespan
@@ -131,7 +131,7 @@ def save_upload(upload_file: UploadFile, temp_dir: str) -> str:
 def health():
     return {
         "status": "ok",
-        "service": "mapcanvas-api",
+        "service": "spatix-api",
         "version": "1.0.0",
         "tagline": "Maps in seconds. No GIS skills needed.",
         "formats": list(INPUT_FORMATS.keys())
