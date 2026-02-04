@@ -156,7 +156,7 @@ export default function Home() {
       <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
         <Link href="/" className="flex items-center gap-2">
           <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center"><span className="text-white text-xl">🗺️</span></div>
-          <span className="font-bold text-xl text-slate-900">MapCanvas</span>
+          <span className="font-bold text-xl text-slate-900">Spatix</span>
         </Link>
         <div className="flex items-center gap-6">
           <Link href="/developers" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Developers</Link>
@@ -240,11 +240,11 @@ export default function Home() {
 
       <footer className="border-t border-slate-200 mt-20 py-8">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between text-sm text-slate-500">
-          <p>© 2025 MapCanvas. All rights reserved.</p>
+          <p>© 2025 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
             <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
-            <a href="https://twitter.com/mapcanvas" className="hover:text-slate-700">Twitter</a>
+            <a href="https://twitter.com/spatixmaps" className="hover:text-slate-700">Twitter</a>
           </div>
         </div>
       </footer>
