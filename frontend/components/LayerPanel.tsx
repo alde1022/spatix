@@ -112,33 +112,3 @@ const LayerPanel: React.FC<LayerPanelProps> = ({
 };
 
 export default LayerPanel;
-
-// types.ts
-
-export interface Layer {
-  id: string;
-  name: string;
-  visible: boolean;
-  geojson: any;
-  style: {
-    fillColor: string;
-    fillOpacity: number;
-    strokeColor: string;
-    strokeWidth: number;
-  };
-}
-
-export interface LayerPanelProps {
-  layers: Layer[];
-  selectedLayerId: string | null;
-  onSelectLayer: (id: string) => void;
-  onToggleVisibility: (id: string) => void;
-  onDeleteLayer: (id: string) => void;
-  onRenameLayer: (id: string, name: string) => void;
-  onReorderLayers: (layers: Layer[]) => void;
-  onAddLayer: () => void;
-}
-
-<!-- It's assumed you'll have Google Material Icons included in your project -->
-<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-
