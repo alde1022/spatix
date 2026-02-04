@@ -235,6 +235,14 @@ async def analyze(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+# Add auth router
+try:
+    from routers.auth import router as auth_router
+    app.include_router(auth_router)
+    print("✅ Auth router loaded")
+except Exception as e:
+    print(f"❌ Auth router failed: {e}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
