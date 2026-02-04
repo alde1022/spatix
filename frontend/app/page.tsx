@@ -33,23 +33,23 @@ export default function Home() {
       const formData = new FormData()
       formData.append("file", selectedFile)
 
-      const response = await fetch(\`\${API_URL}/analyze?include_preview=true\`, {
+      const response = await fetch(`${API_URL}/analyze?include_preview=true`, {
         method: "POST",
         body: formData,
       })
 
       if (!response.ok) {
         let errorMessage = "Failed to process file"
-        let details = null
+        let details: string | null = null
         try {
           const errorData = await response.json()
           errorMessage = errorData.detail || errorData.message || errorMessage
           details = errorData.hint || null
         } catch {
-          errorMessage = \`Server error (\${response.status}): \${response.statusText}\`
+          errorMessage = "Server error (" + response.status + "): " + response.statusText
         }
-        const err = new Error(errorMessage)
-        ;(err as any).details = details
+        const err = new Error(errorMessage) as any
+        err.details = details
         throw err
       }
 
@@ -63,13 +63,13 @@ export default function Home() {
       } else {
         throw new Error("Could not generate map preview. The file may not contain valid geographic data.")
       }
-    } catch (err) {
-      if (err instanceof TypeError && err.message.includes('fetch')) {
+    } catch (err: any) {
+      if (err instanceof TypeError && err.message.includes("fetch")) {
         setError("Connection failed")
         setErrorDetails("Could not connect to the server. Please check your internet connection and try again.")
       } else if (err instanceof Error) {
         setError(err.message)
-        setErrorDetails((err as any).details || null)
+        setErrorDetails(err.details || null)
       } else {
         setError("An unexpected error occurred")
         setErrorDetails("Please try again or contact support if the problem persists.")
@@ -85,7 +85,7 @@ export default function Home() {
     setErrorDetails(null)
     
     try {
-      const response = await fetch(\`\${API_URL}/api/map\`, {
+      const response = await fetch(`${API_URL}/api/map`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -226,8 +226,8 @@ export default function Home() {
             <div>
               <h3 className="text-white font-semibold mb-2">AI-native API</h3>
               <p className="text-slate-400 text-sm mb-4">Perfect for AI agents. Create maps with a single POST request.</p>
-              <pre className="bg-slate-800 p-4 rounded-lg text-sm text-slate-300 overflow-x-auto">{String.raw\`POST /api/map
-{ "data": [[-122, 37], [-118, 34]], "title": "West Coast" }\`}</pre>
+              <pre className="bg-slate-800 p-4 rounded-lg text-sm text-slate-300 overflow-x-auto">{`POST /api/map
+{ "data": [[-122, 37], [-118, 34]], "title": "West Coast" }`}</pre>
               <Link href="/developers" className="inline-block mt-4 text-violet-400 hover:text-violet-300 text-sm font-medium">View API docs →</Link>
             </div>
           </div>
