@@ -259,7 +259,7 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
         <div className="p-4 border-b border-slate-200">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xl">🗺️</span>
-            <span className="font-bold text-slate-900">MapCanvas</span>
+            <span className="font-bold text-slate-900">Spatix</span>
           </div>
           <p className="text-sm text-slate-500">Style your map</p>
         </div>
