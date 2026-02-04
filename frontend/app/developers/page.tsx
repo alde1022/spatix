@@ -12,7 +12,7 @@ export default function DevelopersPage() {
             <span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse"></span>
             AI-Native API
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">MapCanvas API</h1>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">Spatix API</h1>
           <p className="text-xl text-slate-300 mb-8">
             The simplest way for AI agents and developers to create maps
           </p>
@@ -49,7 +49,7 @@ export default function DevelopersPage() {
             Create a map with a single POST request. No complex setup required.
           </p>
           <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto">
-            <pre className="text-sm"><code>{`curl -X POST https://api.mapcanvas.io/map \\
+            <pre className="text-sm"><code>{`curl -X POST https://api.spatix.io/map \\
   -H "Content-Type: application/json" \\
   -d '{
     "data": {"type": "Point", "coordinates": [-122.4194, 37.7749]},
@@ -63,8 +63,8 @@ export default function DevelopersPage() {
             <pre className="text-sm"><code>{`{
   "success": true,
   "id": "abc123",
-  "url": "https://mapcanvas.io/m/abc123",
-  "embed": "<iframe src='https://mapcanvas.io/m/abc123?embed=1' ...></iframe>"
+  "url": "https://spatix.io/m/abc123",
+  "embed": "<iframe src='https://spatix.io/m/abc123?embed=1' ...></iframe>"
 }`}</code></pre>
           </div>
         </section>
@@ -85,7 +85,7 @@ export default function DevelopersPage() {
           </div>
           <div className="mt-4 p-4 bg-brand-50 border border-brand-200 rounded-xl">
             <p className="text-brand-800 text-sm">
-              <strong>Base URL:</strong> <code className="bg-brand-100 px-2 py-1 rounded">https://api.mapcanvas.io</code>
+              <strong>Base URL:</strong> <code className="bg-brand-100 px-2 py-1 rounded">https://api.spatix.io</code>
             </p>
           </div>
         </section>
@@ -144,9 +144,9 @@ export default function DevelopersPage() {
               <pre className="text-sm"><code>{`{
   "success": true,
   "id": "abc123",
-  "url": "https://mapcanvas.io/m/abc123",
+  "url": "https://spatix.io/m/abc123",
   "embed": "<iframe src='...' width='600' height='400'></iframe>",
-  "preview_url": "https://mapcanvas.io/api/map/abc123/preview.png"
+  "preview_url": "https://spatix.io/api/map/abc123/preview.png"
 }`}</code></pre>
             </div>
           </div>
@@ -233,7 +233,7 @@ export default function DevelopersPage() {
               <pre className="text-sm"><code>{`import requests
 
 response = requests.post(
-    "https://api.mapcanvas.io/map",
+    "https://api.spatix.io/map",
     json={
         "data": {
             "type": "FeatureCollection",
@@ -250,7 +250,7 @@ response = requests.post(
     }
 )
 
-print(response.json()["url"])  # https://mapcanvas.io/m/abc123`}</code></pre>
+print(response.json()["url"])  # https://spatix.io/m/abc123`}</code></pre>
             </div>
           </div>
 
@@ -258,7 +258,7 @@ print(response.json()["url"])  # https://mapcanvas.io/m/abc123`}</code></pre>
           <div className="mb-6">
             <h3 className="font-semibold mb-3">JavaScript</h3>
             <div className="bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto">
-              <pre className="text-sm"><code>{`const response = await fetch("https://api.mapcanvas.io/map", {
+              <pre className="text-sm"><code>{`const response = await fetch("https://api.spatix.io/map", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -272,7 +272,7 @@ print(response.json()["url"])  # https://mapcanvas.io/m/abc123`}</code></pre>
 });
 
 const { url } = await response.json();
-console.log(url);  // https://mapcanvas.io/m/abc123`}</code></pre>
+console.log(url);  // https://spatix.io/m/abc123`}</code></pre>
             </div>
           </div>
 
@@ -326,7 +326,7 @@ console.log(url);  // https://mapcanvas.io/m/abc123`}</code></pre>
       {/* Footer */}
       <footer className="border-t border-slate-200 mt-12 py-8">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between text-sm text-slate-500">
-          <p>© 2025 MapCanvas. All rights reserved.</p>
+          <p>© 2025 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
             <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
