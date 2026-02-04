@@ -29,22 +29,22 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const map = await getMap(params.id)
 
   if (!map) {
-    return { title: "Map Not Found | MapCanvas" }
+    return { title: "Map Not Found | Spatix" }
   }
 
   return {
-    title: `${map.title || "Map"} | MapCanvas`,
-    description: map.description || "Interactive map created with MapCanvas",
+    title: `${map.title || "Map"} | Spatix`,
+    description: map.description || "Interactive map created with Spatix",
     openGraph: {
       title: map.title || "Map",
-      description: map.description || "Interactive map created with MapCanvas",
+      description: map.description || "Interactive map created with Spatix",
       type: "website",
-      images: [`https://mapcanvas.io/api/map/${params.id}/preview.png`],
+      images: [`https://spatix.io/api/map/${params.id}/preview.png`],
     },
     twitter: {
       card: "summary_large_image",
       title: map.title || "Map",
-      description: map.description || "Interactive map created with MapCanvas",
+      description: map.description || "Interactive map created with Spatix",
     },
   }
 }
@@ -69,8 +69,8 @@ export default async function MapPage({ params, searchParams }: Props) {
           <span className="font-medium">{map.title}</span>
           {map.description && <span className="text-gray-500 ml-2">— {map.description}</span>}
           <span className="text-gray-400 mx-2">•</span>
-          <a href="https://mapcanvas.io" className="text-brand-600 hover:underline">
-            MapCanvas
+          <a href="https://spatix.io" className="text-brand-600 hover:underline">
+            Spatix
           </a>
         </div>
       )}
@@ -78,8 +78,8 @@ export default async function MapPage({ params, searchParams }: Props) {
       {/* Embed attribution */}
       {isEmbed && (
         <div className="absolute bottom-2 right-2 bg-white/80 px-3 py-1 rounded text-xs text-gray-600 z-[1000]">
-          <a href="https://mapcanvas.io" target="_blank" className="text-brand-600 hover:underline">
-            MapCanvas
+          <a href="https://spatix.io" target="_blank" className="text-brand-600 hover:underline">
+            Spatix
           </a>
         </div>
       )}
