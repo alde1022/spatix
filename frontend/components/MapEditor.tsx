@@ -4,17 +4,10 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import { EditControl } from 'react-leaflet-draw';
-import 'tailwindcss/tailwind.css';
 import LayerPanel from './LayerPanel';
 import StyleEditor from './StyleEditor';
 import DrawingToolbar from './DrawingToolbar';
-
-interface Layer {
-  id: string;
-  name: string;
-  features: L.FeatureGroup;
-  style: L.PathOptions;
-}
+import { Layer } from './types';
 
 const defaultStyle: L.PathOptions = {
   color: '#3388ff',
@@ -28,7 +21,7 @@ const MapEditor: React.FC = () => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
 
   const handleAddLayer = (name: string) => {
-    const newLayer = {
+    const newLayer: Layer = {
       id: `layer-${Date.now()}`,
       name,
       features: L.featureGroup(),
@@ -45,7 +38,7 @@ const MapEditor: React.FC = () => {
 
   const handleFeatureAdd = (e: L.DrawEvents.Created) => {
     const activeLayer = layers.find(layer => layer.id === selectedLayer);
-    if (activeLayer) {
+    if (activeLayer && activeLayer.features) {
       activeLayer.features.addLayer(e.layer);
       setLayers([...layers]);
     }
@@ -58,7 +51,7 @@ const MapEditor: React.FC = () => {
   const handleStyleChange = (style: L.PathOptions) => {
     if (selectedLayer) {
       const layerToStyle = layers.find(layer => layer.id === selectedLayer);
-      if (layerToStyle) {
+      if (layerToStyle && layerToStyle.features) {
         layerToStyle.style = { ...style };
         layerToStyle.features.eachLayer((layer: L.Layer) => {
           if ((layer as L.Path).setStyle) {
@@ -101,7 +94,7 @@ const MapEditor: React.FC = () => {
           )}
           <EditControlComponent
             onCreated={handleFeatureAdd}
-            activeLayer={selectedLayer ? layers.find(layer => layer.id === selectedLayer)?.features : null}
+            activeLayer={selectedLayer ? layers.find(layer => layer.id === selectedLayer)?.features ?? null : null}
           />
         </MapContainer>
       </div>
@@ -109,19 +102,31 @@ const MapEditor: React.FC = () => {
   );
 };
 
-const LayerComponent = ({ layer, isActive, onFeatureClick }: { layer: Layer, isActive: boolean, onFeatureClick: (layer: L.Layer) => void }) => {
+interface LayerComponentProps {
+  layer: Layer;
+  isActive: boolean;
+  onFeatureClick: (layer: L.Layer) => void;
+}
+
+const LayerComponent: React.FC<LayerComponentProps> = ({ layer, isActive, onFeatureClick }) => {
   const map = useMap();
-  if (isActive) {
-    map.addLayer(layer.features);
-    layer.features.eachLayer(layer => layer.on('click', () => onFeatureClick(layer)));
-  } else {
-    map.removeLayer(layer.features);
+  if (layer.features) {
+    if (isActive) {
+      map.addLayer(layer.features);
+      layer.features.eachLayer(l => l.on('click', () => onFeatureClick(l)));
+    } else {
+      map.removeLayer(layer.features);
+    }
   }
   return null;
 };
 
-const EditControlComponent = ({ onCreated, activeLayer }: { onCreated: (e: L.DrawEvents.Created) => void, activeLayer: L.FeatureGroup | null }) => {
-  const map = useMap();
+interface EditControlProps {
+  onCreated: (e: L.DrawEvents.Created) => void;
+  activeLayer: L.FeatureGroup | null;
+}
+
+const EditControlComponent: React.FC<EditControlProps> = ({ onCreated, activeLayer }) => {
   if (activeLayer) {
     return <EditControl position="topright" onCreated={onCreated} draw={{ rectangle: false, circle: false }} featureGroup={activeLayer} />;
   }
@@ -129,11 +134,3 @@ const EditControlComponent = ({ onCreated, activeLayer }: { onCreated: (e: L.Dra
 };
 
 export default MapEditor;
-
-This code provides a basic structure for a `MapEditor` component. The code includes:
-- A `LayerPanel` for managing layers.
-- A `StyleEditor` for editing a layer's style.
-- A `DrawingToolbar` to interact with different drawing functionalities.
-- The integration of `react-leaflet` for map display and interaction.
-
-Make sure to implement the auxiliary components (`LayerPanel`, `DrawingToolbar`, `StyleEditor`) and add Tailwind CSS to style your components further.
