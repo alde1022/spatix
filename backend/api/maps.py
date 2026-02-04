@@ -1,5 +1,5 @@
 """
-MapCanvas AI-Native Map API
+Spatix AI-Native Map API
 The simplest way for AI agents to create maps.
 
 POST /api/map - Dead simple map creation from data
