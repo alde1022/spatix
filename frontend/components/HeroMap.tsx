@@ -22,10 +22,11 @@ export default function HeroMap() {
       zoom: 12,
       attributionControl: false,
       interactive: true,
-      scrollZoom: true,
+      scrollZoom: false,  // Disabled - use Ctrl+scroll or buttons
       dragPan: true,
       dragRotate: false,
       touchZoomRotate: true,
+      cooperativeGestures: true,  // Shows "Use Ctrl + scroll to zoom"
     })
     
     // Add zoom controls
