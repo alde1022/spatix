@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Import map routes
 from api.maps import router as maps_router
+from api.geocode import router as geocode_router
+from api.nlp_maps import router as nlp_maps_router
 
 # Environment configuration
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
@@ -123,6 +125,8 @@ app.add_middleware(
 
 # Include map routes
 app.include_router(maps_router)
+app.include_router(geocode_router)
+app.include_router(nlp_maps_router)
 
 
 def sanitize_for_json(gdf):
