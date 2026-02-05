@@ -10,28 +10,81 @@ const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
 
-// Example maps to inspire users
+// Example maps to inspire users - with sample GeoJSON data
 const exampleMaps = [
   { 
     id: "demo-coffee", 
     title: "Coffee Shops in SF",
     description: "Points from CSV",
     thumbnail: "☕",
-    color: "bg-amber-100"
+    color: "bg-amber-100",
+    fileType: "CSV",
+    sampleFile: `name,lat,lng,rating
+Blue Bottle Coffee,37.7823,-122.4086,4.5
+Sightglass Coffee,37.7715,-122.4105,4.7
+Ritual Coffee,37.7565,-122.4215,4.6
+Philz Coffee,37.7642,-122.4335,4.8
+Four Barrel Coffee,37.7672,-122.4223,4.4
+Equator Coffees,37.7538,-122.4178,4.6
+Verve Coffee,37.7821,-122.4052,4.5
+Andytown Coffee,37.7559,-122.5070,4.7`,
+    geojson: {
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", properties: { name: "Blue Bottle Coffee", rating: 4.5 }, geometry: { type: "Point", coordinates: [-122.4086, 37.7823] }},
+        { type: "Feature", properties: { name: "Sightglass Coffee", rating: 4.7 }, geometry: { type: "Point", coordinates: [-122.4105, 37.7715] }},
+        { type: "Feature", properties: { name: "Ritual Coffee", rating: 4.6 }, geometry: { type: "Point", coordinates: [-122.4215, 37.7565] }},
+        { type: "Feature", properties: { name: "Philz Coffee", rating: 4.8 }, geometry: { type: "Point", coordinates: [-122.4335, 37.7642] }},
+        { type: "Feature", properties: { name: "Four Barrel Coffee", rating: 4.4 }, geometry: { type: "Point", coordinates: [-122.4223, 37.7672] }},
+        { type: "Feature", properties: { name: "Equator Coffees", rating: 4.6 }, geometry: { type: "Point", coordinates: [-122.4178, 37.7538] }},
+        { type: "Feature", properties: { name: "Verve Coffee", rating: 4.5 }, geometry: { type: "Point", coordinates: [-122.4052, 37.7821] }},
+        { type: "Feature", properties: { name: "Andytown Coffee", rating: 4.7 }, geometry: { type: "Point", coordinates: [-122.5070, 37.7559] }},
+      ]
+    }
   },
   { 
     id: "demo-trails", 
-    title: "Hiking Trails",
+    title: "Bay Area Trails",
     description: "Lines from GPX",
     thumbnail: "🥾",
-    color: "bg-green-100"
+    color: "bg-green-100",
+    fileType: "GPX",
+    sampleFile: `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1">
+  <trk><name>Dipsea Trail</name>
+    <trkseg>
+      <trkpt lat="37.8976" lon="-122.5215"/>
+      <trkpt lat="37.9012" lon="-122.5847"/>
+    </trkseg>
+  </trk>
+</gpx>`,
+    geojson: {
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", properties: { name: "Dipsea Trail", length: "7.4 mi" }, geometry: { type: "LineString", coordinates: [[-122.5215, 37.8976], [-122.5342, 37.8998], [-122.5521, 37.9045], [-122.5698, 37.9012], [-122.5847, 37.9012]] }},
+        { type: "Feature", properties: { name: "Tennessee Valley Trail", length: "3.4 mi" }, geometry: { type: "LineString", coordinates: [[-122.5337, 37.8652], [-122.5425, 37.8589], [-122.5523, 37.8547], [-122.5615, 37.8512]] }},
+        { type: "Feature", properties: { name: "Coastal Trail", length: "5.2 mi" }, geometry: { type: "LineString", coordinates: [[-122.5098, 37.8312], [-122.5156, 37.8398], [-122.5234, 37.8476], [-122.5312, 37.8534], [-122.5398, 37.8589]] }},
+        { type: "Feature", properties: { name: "Matt Davis Trail", length: "6.1 mi" }, geometry: { type: "LineString", coordinates: [[-122.5978, 37.9112], [-122.5876, 37.9067], [-122.5756, 37.9034], [-122.5623, 37.8998]] }},
+      ]
+    }
   },
   { 
     id: "demo-zones", 
-    title: "School Districts",
+    title: "SF School Districts",
     description: "Polygons from Shapefile",
     thumbnail: "🏫",
-    color: "bg-blue-100"
+    color: "bg-blue-100",
+    fileType: "Shapefile",
+    sampleFile: "school_districts.shp (+ .shx, .dbf, .prj)",
+    geojson: {
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", properties: { name: "Mission District", schools: 12 }, geometry: { type: "Polygon", coordinates: [[[-122.428, 37.760], [-122.405, 37.760], [-122.405, 37.748], [-122.428, 37.748], [-122.428, 37.760]]] }},
+        { type: "Feature", properties: { name: "Sunset District", schools: 18 }, geometry: { type: "Polygon", coordinates: [[[-122.509, 37.765], [-122.470, 37.765], [-122.470, 37.745], [-122.509, 37.745], [-122.509, 37.765]]] }},
+        { type: "Feature", properties: { name: "Richmond District", schools: 15 }, geometry: { type: "Polygon", coordinates: [[[-122.510, 37.790], [-122.458, 37.790], [-122.458, 37.773], [-122.510, 37.773], [-122.510, 37.790]]] }},
+        { type: "Feature", properties: { name: "Marina District", schools: 6 }, geometry: { type: "Polygon", coordinates: [[[-122.445, 37.806], [-122.425, 37.806], [-122.425, 37.798], [-122.445, 37.798], [-122.445, 37.806]]] }},
+      ]
+    }
   },
 ]
 
@@ -48,6 +101,7 @@ export default function Home() {
   const [showCanvas, setShowCanvas] = useState(false)
   const [saving, setSaving] = useState(false)
   const [savedUrl, setSavedUrl] = useState<string | null>(null)
+  const [selectedExample, setSelectedExample] = useState<typeof exampleMaps[0] | null>(null)
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile)
@@ -317,11 +371,15 @@ export default function Home() {
           
           <div className="grid md:grid-cols-3 gap-6">
             {exampleMaps.map((map) => (
-              <div key={map.id} className="group cursor-pointer">
-                <div className={`${map.color} rounded-2xl p-8 mb-4 aspect-[4/3] flex items-center justify-center transition-transform group-hover:scale-[1.02]`}>
-                  <span className="text-6xl">{map.thumbnail}</span>
+              <div 
+                key={map.id} 
+                className="group cursor-pointer"
+                onClick={() => setSelectedExample(map)}
+              >
+                <div className={`${map.color} rounded-2xl p-8 mb-4 aspect-[4/3] flex items-center justify-center transition-transform group-hover:scale-[1.02] group-hover:shadow-lg`}>
+                  <span className="text-6xl group-hover:scale-110 transition-transform">{map.thumbnail}</span>
                 </div>
-                <h3 className="font-semibold text-slate-900 mb-1">{map.title}</h3>
+                <h3 className="font-semibold text-slate-900 mb-1 group-hover:text-brand-600 transition-colors">{map.title}</h3>
                 <p className="text-sm text-slate-500">{map.description}</p>
               </div>
             ))}
@@ -467,6 +525,68 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* Example Preview Modal */}
+      {selectedExample && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className={`${selectedExample.color} w-14 h-14 rounded-xl flex items-center justify-center`}>
+                  <span className="text-3xl">{selectedExample.thumbnail}</span>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">{selectedExample.title}</h3>
+                  <p className="text-sm text-slate-500">Source: {selectedExample.fileType} file</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedExample(null)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {/* Sample File Preview */}
+            <div className="p-6 border-b border-slate-100">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                Sample {selectedExample.fileType} Input
+              </label>
+              <div className="bg-slate-900 rounded-xl p-4 overflow-x-auto">
+                <pre className="text-sm text-slate-300 font-mono whitespace-pre">{selectedExample.sampleFile}</pre>
+              </div>
+            </div>
+            
+            {/* Actions */}
+            <div className="p-6 flex gap-3">
+              <button 
+                onClick={() => {
+                  setGeojson(selectedExample.geojson)
+                  setShowCanvas(true)
+                  setSelectedExample(null)
+                  setFile(null)
+                }}
+                className="flex-1 py-3 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                </svg>
+                View on Map
+              </button>
+              <button 
+                onClick={() => setSelectedExample(null)}
+                className="px-6 py-3 border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
