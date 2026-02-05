@@ -190,7 +190,7 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
       map.current = m
       setMapReady(true)
       addDataLayers()
-      fitBounds()
+      // fitBounds will be called by the useEffect when mapReady becomes true
     })
 
     return () => {
@@ -200,16 +200,43 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
     }
   }, []) // Only run once on mount
 
-  // Fit to bounds when geojson changes
+  // Fit to bounds when geojson changes OR when map becomes ready
   useEffect(() => {
-    if (mapReady && geojson) {
-      // Small delay to ensure layers are added
-      const timer = setTimeout(() => {
-        fitBounds()
-      }, 100)
-      return () => clearTimeout(timer)
+    const m = map.current
+    if (!m || !mapReady || !geojson) return
+    
+    // Wait for layers to be added, then fit bounds
+    const doFit = () => {
+      try {
+        const bounds = new maplibregl.LngLatBounds()
+        const addCoords = (coords: any) => {
+          if (Array.isArray(coords) && typeof coords[0] === "number") {
+            bounds.extend(coords as [number, number])
+          } else if (Array.isArray(coords)) {
+            coords.forEach(addCoords)
+          }
+        }
+        const features = geojson.features || [geojson]
+        features.forEach((f: any) => {
+          if (f.geometry?.coordinates) addCoords(f.geometry.coordinates)
+        })
+        if (!bounds.isEmpty()) {
+          m.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 500 })
+        }
+      } catch (e) {
+        console.error("Auto-zoom error:", e)
+      }
     }
-  }, [geojson, mapReady, fitBounds])
+    
+    // Multiple attempts to ensure it works
+    const t1 = setTimeout(doFit, 100)
+    const t2 = setTimeout(doFit, 500)
+    
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
+  }, [geojson, mapReady])
 
   // Handle basemap changes
   useEffect(() => {
