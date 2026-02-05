@@ -161,7 +161,7 @@ export default function Home() {
         <div className="flex items-center gap-6">
           <Link href="/developers" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Developers</Link>
           <Link href="/pricing" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Pricing</Link>
-          <button className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">Sign In</button>
+          <Link href="/login" className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">Sign In</Link>
         </div>
       </nav>
 
