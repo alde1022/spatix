@@ -40,8 +40,8 @@ export default function Navbar() {
       
       <div className="flex items-center gap-6">
         <Link 
-          href="/" 
-          className={`text-sm font-medium transition-colors ${isActive('/') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
+          href="/maps"
+          className={`text-sm font-medium transition-colors ${isActive('/maps') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
         >
           Maps
         </Link>
