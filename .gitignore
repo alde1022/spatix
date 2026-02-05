@@ -12,6 +12,7 @@ __pycache__/
 *.pyc
 .Python
 *.egg-info/
+*.tsbuildinfo
 
 # Environment
 .env
