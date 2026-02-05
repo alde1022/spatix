@@ -183,15 +183,50 @@ export default function MapsPage() {
   }
 
   // Detect geometry type
-  const detectType = (geojson: any): "point" | "line" | "polygon" => {
-    const features = geojson.features || [geojson]
-    const types = features.map((f: any) => f.geometry?.type).filter(Boolean)
-    if (types.some((t: string) => t.includes("Polygon"))) return "polygon"
-    if (types.some((t: string) => t.includes("Line"))) return "line"
-    return "point"
   }
 
   // Process uploaded file
+  // Split GeoJSON by geometry type (like Kepler.gl)
+  const splitByGeometryType = (geojson: any, baseName: string) => {
+    const features = geojson.features || [geojson]
+    const points: any[] = []
+    const lines: any[] = []
+    const polygons: any[] = []
+
+    features.forEach((f: any) => {
+      const type = f.geometry?.type
+      if (type === "Point" || type === "MultiPoint") points.push(f)
+      else if (type === "LineString" || type === "MultiLineString") lines.push(f)
+      else if (type === "Polygon" || type === "MultiPolygon") polygons.push(f)
+    })
+
+    const result: { name: string; type: "point" | "line" | "polygon"; data: any }[] = []
+    
+    if (points.length > 0) {
+      result.push({
+        name: polygons.length > 0 || lines.length > 0 ? `${baseName} (Points)` : baseName,
+        type: "point",
+        data: { type: "FeatureCollection", features: points }
+      })
+    }
+    if (lines.length > 0) {
+      result.push({
+        name: points.length > 0 || polygons.length > 0 ? `${baseName} (Lines)` : baseName,
+        type: "line", 
+        data: { type: "FeatureCollection", features: lines }
+      })
+    }
+    if (polygons.length > 0) {
+      result.push({
+        name: points.length > 0 || lines.length > 0 ? `${baseName} (Polygons)` : baseName,
+        type: "polygon",
+        data: { type: "FeatureCollection", features: polygons }
+      })
+    }
+
+    return result
+  }
+
   const processFile = async (file: File) => {
     setUploading(true)
     try {
@@ -208,21 +243,26 @@ export default function MapsPage() {
       const data = await response.json()
       if (!data.preview_geojson) throw new Error("No geographic data found")
 
-      const newLayer: Layer = {
-        id: Date.now().toString(),
-        name: file.name.replace(/\.[^/.]+$/, ""),
-        visible: true,
-        color: COLORS[layers.length % COLORS.length],
-        opacity: 0.8,
-        data: data.preview_geojson,
-        type: detectType(data.preview_geojson)
-      }
+      const baseName = file.name.replace(/\.[^/.]+$/, "")
+      const layerGroups = splitByGeometryType(data.preview_geojson, baseName)
 
-      setLayers(prev => [...prev, newLayer])
+      if (layerGroups.length === 0) throw new Error("No valid geometry found")
+
+      const newLayers: Layer[] = layerGroups.map((group, i) => ({
+        id: `${Date.now()}-${i}`,
+        name: group.name,
+        visible: true,
+        color: COLORS[(layers.length + i) % COLORS.length],
+        opacity: 0.8,
+        data: group.data,
+        type: group.type
+      }))
+
+      setLayers(prev => [...prev, ...newLayers])
       setActivePanel("layers")
       
-      // Fit to new layer
-      setTimeout(() => fitToLayer(newLayer), 100)
+      // Fit to first new layer
+      if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
       alert(err instanceof Error ? err.message : "Upload failed")
     } finally {
@@ -237,19 +277,23 @@ export default function MapsPage() {
       const response = await fetch(sample.url)
       const data = await response.json()
 
-      const newLayer: Layer = {
-        id: Date.now().toString(),
-        name: sample.name,
-        visible: true,
-        color: COLORS[layers.length % COLORS.length],
-        opacity: 0.8,
-        data: data,
-        type: detectType(data)
-      }
+      const layerGroups = splitByGeometryType(data, sample.name)
 
-      setLayers(prev => [...prev, newLayer])
+      if (layerGroups.length === 0) throw new Error("No valid geometry found")
+
+      const newLayers: Layer[] = layerGroups.map((group, i) => ({
+        id: `${Date.now()}-${i}`,
+        name: group.name,
+        visible: true,
+        color: COLORS[(layers.length + i) % COLORS.length],
+        opacity: 0.8,
+        data: group.data,
+        type: group.type
+      }))
+
+      setLayers(prev => [...prev, ...newLayers])
       setActivePanel("layers")
-      setTimeout(() => fitToLayer(newLayer), 100)
+      if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
       alert("Failed to load sample")
     } finally {
