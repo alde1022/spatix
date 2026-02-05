@@ -66,6 +66,51 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
   const [strokeWidth, setStrokeWidth] = useState(4)
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
+  // Calculate initial center from geojson data
+  const initialView = useMemo(() => {
+    if (!geojson) return { center: [0, 20] as [number, number], zoom: 2 }
+    
+    const coords: [number, number][] = []
+    const addCoords = (c: any) => {
+      if (Array.isArray(c) && typeof c[0] === "number" && c.length >= 2) {
+        coords.push([c[0], c[1]])
+      } else if (Array.isArray(c)) {
+        c.forEach(addCoords)
+      }
+    }
+    const features = geojson.features || [geojson]
+    features.forEach((f: any) => {
+      if (f.geometry?.coordinates) addCoords(f.geometry.coordinates)
+    })
+    
+    if (coords.length === 0) return { center: [0, 20] as [number, number], zoom: 2 }
+    
+    // Calculate center
+    const lngs = coords.map(c => c[0])
+    const lats = coords.map(c => c[1])
+    const center: [number, number] = [
+      (Math.min(...lngs) + Math.max(...lngs)) / 2,
+      (Math.min(...lats) + Math.max(...lats)) / 2
+    ]
+    
+    // Estimate zoom based on extent
+    const lngSpan = Math.max(...lngs) - Math.min(...lngs)
+    const latSpan = Math.max(...lats) - Math.min(...lats)
+    const maxSpan = Math.max(lngSpan, latSpan)
+    let zoom = 10
+    if (maxSpan > 10) zoom = 4
+    else if (maxSpan > 5) zoom = 5
+    else if (maxSpan > 2) zoom = 6
+    else if (maxSpan > 1) zoom = 7
+    else if (maxSpan > 0.5) zoom = 8
+    else if (maxSpan > 0.2) zoom = 9
+    else if (maxSpan > 0.1) zoom = 10
+    else if (maxSpan > 0.05) zoom = 11
+    else zoom = 12
+    
+    return { center, zoom }
+  }, [geojson])
+
   // Feature counts
   const featureCount = useMemo(() => {
     if (!geojson) return { points: 0, lines: 0, polygons: 0, total: 0 }
@@ -178,8 +223,8 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: BASEMAPS[basemap].style,
-      center: [0, 20],
-      zoom: 2,
+      center: initialView.center,
+      zoom: initialView.zoom,
       attributionControl: false,
     })
 
