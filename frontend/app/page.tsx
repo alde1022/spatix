@@ -75,14 +75,73 @@ Andytown Coffee,37.7559,-122.5070,4.7`,
     thumbnail: "🏫",
     color: "bg-blue-100",
     fileType: "Shapefile",
-    sampleFile: "school_districts.shp (+ .shx, .dbf, .prj)",
+    sampleFile: \`SHAPEFILE: school_districts.zip
+Contains: .shp .shx .dbf .prj
+Fields: NAME, SCHOOLS, AREA_SQMI
+CRS: EPSG:4326 (WGS84)\`,
     geojson: {
       type: "FeatureCollection",
       features: [
-        { type: "Feature", properties: { name: "Mission District", schools: 12 }, geometry: { type: "Polygon", coordinates: [[[-122.428, 37.760], [-122.405, 37.760], [-122.405, 37.748], [-122.428, 37.748], [-122.428, 37.760]]] }},
-        { type: "Feature", properties: { name: "Sunset District", schools: 18 }, geometry: { type: "Polygon", coordinates: [[[-122.509, 37.765], [-122.470, 37.765], [-122.470, 37.745], [-122.509, 37.745], [-122.509, 37.765]]] }},
-        { type: "Feature", properties: { name: "Richmond District", schools: 15 }, geometry: { type: "Polygon", coordinates: [[[-122.510, 37.790], [-122.458, 37.790], [-122.458, 37.773], [-122.510, 37.773], [-122.510, 37.790]]] }},
-        { type: "Feature", properties: { name: "Marina District", schools: 6 }, geometry: { type: "Polygon", coordinates: [[[-122.445, 37.806], [-122.425, 37.806], [-122.425, 37.798], [-122.445, 37.798], [-122.445, 37.806]]] }},
+        { 
+          type: "Feature", 
+          properties: { name: "Mission / Bernal Heights", schools: 14, area: 2.1 }, 
+          geometry: { 
+            type: "Polygon", 
+            coordinates: [[
+              [-122.425, 37.765], [-122.403, 37.765], [-122.400, 37.755],
+              [-122.403, 37.740], [-122.418, 37.735], [-122.430, 37.740],
+              [-122.432, 37.755], [-122.425, 37.765]
+            ]] 
+          }
+        },
+        { 
+          type: "Feature", 
+          properties: { name: "Sunset / Parkside", schools: 22, area: 4.8 }, 
+          geometry: { 
+            type: "Polygon", 
+            coordinates: [[
+              [-122.510, 37.765], [-122.470, 37.765], [-122.465, 37.755],
+              [-122.470, 37.735], [-122.495, 37.730], [-122.510, 37.735],
+              [-122.515, 37.750], [-122.510, 37.765]
+            ]] 
+          }
+        },
+        { 
+          type: "Feature", 
+          properties: { name: "Richmond / Sea Cliff", schools: 18, area: 3.2 }, 
+          geometry: { 
+            type: "Polygon", 
+            coordinates: [[
+              [-122.510, 37.790], [-122.465, 37.790], [-122.458, 37.780],
+              [-122.460, 37.772], [-122.485, 37.768], [-122.510, 37.772],
+              [-122.515, 37.782], [-122.510, 37.790]
+            ]] 
+          }
+        },
+        { 
+          type: "Feature", 
+          properties: { name: "Marina / Pacific Heights", schools: 8, area: 1.4 }, 
+          geometry: { 
+            type: "Polygon", 
+            coordinates: [[
+              [-122.445, 37.805], [-122.415, 37.805], [-122.410, 37.795],
+              [-122.418, 37.787], [-122.438, 37.787], [-122.448, 37.793],
+              [-122.450, 37.800], [-122.445, 37.805]
+            ]] 
+          }
+        },
+        { 
+          type: "Feature", 
+          properties: { name: "Downtown / SOMA", schools: 6, area: 1.8 }, 
+          geometry: { 
+            type: "Polygon", 
+            coordinates: [[
+              [-122.415, 37.790], [-122.390, 37.790], [-122.385, 37.778],
+              [-122.392, 37.770], [-122.410, 37.772], [-122.418, 37.780],
+              [-122.415, 37.790]
+            ]] 
+          }
+        },
       ]
     }
   },
