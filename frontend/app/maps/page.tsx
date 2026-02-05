@@ -214,6 +214,58 @@ export default function MapsPage() {
       
       map.current = m
       setMapReady(true)
+      
+      // Check for example data passed from homepage
+      const exampleData = localStorage.getItem('spatix_example_data')
+      if (exampleData) {
+        try {
+          const { geojson, name } = JSON.parse(exampleData)
+          localStorage.removeItem('spatix_example_data') // Clear it
+          
+          if (geojson) {
+            // Add the example data as a layer
+            const layerGroups = splitByGeometryType(geojson, name || 'Example')
+            const newLayers: Layer[] = layerGroups.map((group, i) => ({
+              id: `${Date.now()}-${i}`,
+              name: group.name,
+              visible: true,
+              color: LAYER_COLORS[i % LAYER_COLORS.length],
+              opacity: 0.8,
+              data: group.data,
+              type: group.type,
+              vizType: group.type === "point" ? "point" : group.type === "line" ? "line" : "fill",
+              height: 1000,
+              radius: 1000
+            }))
+            setLayers(newLayers)
+            setActivePanel("layers")
+            
+            // Fit to bounds
+            if (newLayers[0]) {
+              setTimeout(() => {
+                const layer = newLayers[0]
+                if (!layer.data) return
+                try {
+                  const bounds = new maplibregl.LngLatBounds()
+                  const addCoords = (coords: any) => {
+                    if (typeof coords[0] === "number") bounds.extend(coords as [number, number])
+                    else coords.forEach(addCoords)
+                  }
+                  const features = layer.data.features || [layer.data]
+                  features.forEach((f: any) => {
+                    if (f.geometry?.coordinates) addCoords(f.geometry.coordinates)
+                  })
+                  if (!bounds.isEmpty() && map.current) {
+                    map.current.fitBounds(bounds, { padding: 80, maxZoom: 12, duration: 800 })
+                  }
+                } catch (e) {}
+              }, 200)
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load example data:', e)
+        }
+      }
     })
 
     return () => {

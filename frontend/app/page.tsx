@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import dynamic from "next/dynamic"
 import Link from "next/link"
 import Navbar from "@/components/Navbar"
@@ -161,6 +162,7 @@ export default function Home() {
   const [saving, setSaving] = useState(false)
   const [savedUrl, setSavedUrl] = useState<string | null>(null)
   const [selectedExample, setSelectedExample] = useState<typeof exampleMaps[0] | null>(null)
+  const router = useRouter()
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile)
@@ -624,10 +626,13 @@ export default function Home() {
             <div className="p-6 flex gap-3">
               <button 
                 onClick={() => {
-                  setGeojson(selectedExample.geojson)
-                  setShowCanvas(true)
+                  // Store geojson in localStorage for /maps to pick up
+                  localStorage.setItem('spatix_example_data', JSON.stringify({
+                    geojson: selectedExample.geojson,
+                    name: selectedExample.title
+                  }))
                   setSelectedExample(null)
-                  setFile(null)
+                  router.push('/maps')
                 }}
                 className="flex-1 py-3 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-colors flex items-center justify-center gap-2"
               >
