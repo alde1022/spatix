@@ -1,13 +1,38 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import Link from "next/link"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
+import { MapboxOverlay } from "@deck.gl/mapbox"
+import { ScatterplotLayer, ArcLayer, GeoJsonLayer } from "@deck.gl/layers"
+import { HexagonLayer, HeatmapLayer } from "@deck.gl/aggregation-layers"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
 
-// Sample datasets for demo
+// Kepler-inspired color palettes
+const COLOR_PALETTES = {
+  uber: ["#5A1846", "#900C3F", "#C70039", "#E3611C", "#F1920E", "#FFC300"],
+  ice: ["#0d47a1", "#1565c0", "#1e88e5", "#42a5f5", "#64b5f6", "#90caf9"],
+  fire: ["#b71c1c", "#c62828", "#d32f2f", "#e53935", "#ef5350", "#ef9a9a"],
+  nature: ["#1b5e20", "#2e7d32", "#388e3c", "#43a047", "#66bb6a", "#a5d6a7"],
+  sunset: ["#4a148c", "#6a1b9a", "#7b1fa2", "#8e24aa", "#ab47bc", "#ce93d8"],
+  ocean: ["#006064", "#00838f", "#0097a7", "#00acc1", "#26c6da", "#80deea"],
+}
+
+// Kepler default colors for layers
+const LAYER_COLORS = [
+  [255, 203, 153], // Peach
+  [90, 24, 70],    // Deep purple
+  [144, 12, 63],   // Magenta
+  [199, 0, 57],    // Red
+  [227, 97, 28],   // Orange
+  [241, 146, 14],  // Yellow
+  [0, 188, 212],   // Cyan
+  [76, 175, 80],   // Green
+]
+
+// Sample datasets
 const SAMPLE_DATASETS = [
   {
     id: "earthquakes",
@@ -39,23 +64,25 @@ const BASEMAPS = {
   },
 }
 
-const COLORS = ["#00d1b2", "#ff6b6b", "#4ecdc4", "#f7dc6f", "#bb8fce", "#85c1e9", "#f8b500", "#e74c3c"]
+type VizType = "point" | "heatmap" | "hexagon" | "arc" | "fill" | "line" | "3d"
 
 interface Layer {
   id: string
   name: string
   visible: boolean
-  color: string
+  color: number[]
   opacity: number
   data: any
   type: "point" | "line" | "polygon"
-  vizType: "default" | "heatmap" | "3d"
-  height?: number  // for 3D extrusion
+  vizType: VizType
+  height?: number
+  radius?: number
 }
 
 export default function MapsPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
+  const deckOverlay = useRef<MapboxOverlay | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<string>("dark")
   const [layers, setLayers] = useState<Layer[]>([])
@@ -63,6 +90,97 @@ export default function MapsPage() {
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Build deck.gl layers
+  const deckLayers = useMemo(() => {
+    return layers.filter(l => l.visible).flatMap(layer => {
+      const features = layer.data?.features || []
+      
+      // Extract coordinates for point-based layers
+      const points = features
+        .filter((f: any) => f.geometry?.type === "Point")
+        .map((f: any) => ({
+          position: f.geometry.coordinates,
+          properties: f.properties || {}
+        }))
+
+      if (layer.vizType === "heatmap" && layer.type === "point") {
+        return new HeatmapLayer({
+          id: `heatmap-${layer.id}`,
+          data: points,
+          getPosition: (d: any) => d.position,
+          getWeight: 1,
+          radiusPixels: layer.radius || 30,
+          intensity: 1,
+          threshold: 0.03,
+          opacity: layer.opacity,
+          colorRange: COLOR_PALETTES.uber.map(c => {
+            const hex = c.replace('#', '')
+            return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)]
+          })
+        })
+      }
+
+      if (layer.vizType === "hexagon" && layer.type === "point") {
+        return new HexagonLayer({
+          id: `hexagon-${layer.id}`,
+          data: points,
+          getPosition: (d: any) => d.position,
+          radius: layer.radius || 1000,
+          elevationScale: 50,
+          extruded: true,
+          opacity: layer.opacity,
+          colorRange: COLOR_PALETTES.uber.map(c => {
+            const hex = c.replace('#', '')
+            return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)]
+          })
+        })
+      }
+
+      if (layer.vizType === "point" && layer.type === "point") {
+        return new ScatterplotLayer({
+          id: `scatter-${layer.id}`,
+          data: points,
+          getPosition: (d: any) => d.position,
+          getFillColor: layer.color,
+          getRadius: 5,
+          radiusScale: 1,
+          radiusMinPixels: 3,
+          radiusMaxPixels: 30,
+          opacity: layer.opacity,
+          stroked: true,
+          lineWidthMinPixels: 1,
+          getLineColor: [255, 255, 255],
+        })
+      }
+
+      // GeoJSON layer for lines and polygons
+      if (layer.type === "line" || layer.type === "polygon") {
+        return new GeoJsonLayer({
+          id: `geojson-${layer.id}`,
+          data: layer.data,
+          filled: layer.type === "polygon",
+          stroked: true,
+          getFillColor: [...layer.color, Math.floor(layer.opacity * 128)],
+          getLineColor: layer.color,
+          getLineWidth: 2,
+          lineWidthMinPixels: 1,
+          extruded: layer.vizType === "3d",
+          getElevation: layer.height || 100,
+          opacity: layer.opacity,
+        })
+      }
+
+      return []
+    })
+  }, [layers])
+
+  // Update deck overlay
+  useEffect(() => {
+    if (deckOverlay.current) {
+      deckOverlay.current.setProps({ layers: deckLayers })
+    }
+  }, [deckLayers])
 
   // Initialize map
   useEffect(() => {
@@ -74,12 +192,19 @@ export default function MapsPage() {
       center: [0, 20],
       zoom: 2,
       attributionControl: false,
+      antialias: true,
     })
 
     m.addControl(new maplibregl.NavigationControl({ showCompass: true }), "bottom-right")
-    m.addControl(new maplibregl.ScaleControl({ maxWidth: 100 }), "bottom-left")
 
     m.on("load", () => {
+      // Initialize deck.gl overlay
+      deckOverlay.current = new MapboxOverlay({
+        interleaved: true,
+        layers: []
+      })
+      m.addControl(deckOverlay.current as any)
+      
       map.current = m
       setMapReady(true)
     })
@@ -94,116 +219,8 @@ export default function MapsPage() {
   useEffect(() => {
     const m = map.current
     if (!m || !mapReady) return
-
     m.setStyle(BASEMAPS[basemap].style as any)
-    m.once("styledata", () => {
-      // Re-add all layers
-      layers.forEach(layer => {
-        if (layer.visible) addLayerToMap(layer)
-      })
-    })
   }, [basemap, mapReady])
-
-  // Add layer to map
-  const addLayerToMap = useCallback((layer: Layer) => {
-    const m = map.current
-    if (!m) return
-
-    const sourceId = `source-${layer.id}`
-    const layerId = `layer-${layer.id}`
-
-    // Remove all possible layer variants
-    const layerVariants = [layerId, `${layerId}-outline`, `${layerId}-heatmap`, `${layerId}-3d`]
-    layerVariants.forEach(id => { if (m.getLayer(id)) m.removeLayer(id) })
-    if (m.getSource(sourceId)) m.removeSource(sourceId)
-
-    if (!layer.visible) return
-
-    m.addSource(sourceId, { type: "geojson", data: layer.data })
-
-    // Heatmap visualization
-    if (layer.vizType === "heatmap" && layer.type === "point") {
-      m.addLayer({
-        id: `${layerId}-heatmap`,
-        type: "heatmap",
-        source: sourceId,
-        paint: {
-          "heatmap-weight": 1,
-          "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 9, 3],
-          "heatmap-color": [
-            "interpolate", ["linear"], ["heatmap-density"],
-            0, "rgba(0,0,0,0)",
-            0.2, layer.color + "33",
-            0.4, layer.color + "66",
-            0.6, layer.color + "99",
-            0.8, layer.color + "cc",
-            1, layer.color
-          ],
-          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20],
-          "heatmap-opacity": layer.opacity
-        }
-      })
-      return
-    }
-
-    // 3D Extrusion visualization
-    if (layer.vizType === "3d" && layer.type === "polygon") {
-      m.addLayer({
-        id: `${layerId}-3d`,
-        type: "fill-extrusion",
-        source: sourceId,
-        paint: {
-          "fill-extrusion-color": layer.color,
-          "fill-extrusion-height": layer.height || 1000,
-          "fill-extrusion-base": 0,
-          "fill-extrusion-opacity": layer.opacity * 0.8
-        }
-      })
-      return
-    }
-
-    // Default visualizations
-    if (layer.type === "point") {
-      m.addLayer({
-        id: `${layerId}-outline`,
-        type: "circle",
-        source: sourceId,
-        paint: { "circle-radius": 6, "circle-color": "#ffffff", "circle-opacity": layer.opacity }
-      })
-      m.addLayer({
-        id: layerId,
-        type: "circle",
-        source: sourceId,
-        paint: { "circle-radius": 4, "circle-color": layer.color, "circle-opacity": layer.opacity }
-      })
-    } else if (layer.type === "line") {
-      m.addLayer({
-        id: layerId,
-        type: "line",
-        source: sourceId,
-        paint: { "line-color": layer.color, "line-width": 2, "line-opacity": layer.opacity }
-      })
-    } else {
-      m.addLayer({
-        id: layerId,
-        type: "fill",
-        source: sourceId,
-        paint: { "fill-color": layer.color, "fill-opacity": layer.opacity * 0.5 }
-      })
-      m.addLayer({
-        id: `${layerId}-outline`,
-        type: "line",
-        source: sourceId,
-        paint: { "line-color": layer.color, "line-width": 1, "line-opacity": layer.opacity }
-      })
-    }
-  }, [])
-
-  // Update layer on map when settings change
-  useEffect(() => {
-    if (!mapReady) return
-    layers.forEach(layer => addLayerToMap(layer))
-  }, [layers, mapReady, addLayerToMap])
 
   // Fit to layer bounds
   const fitToLayer = (layer: Layer) => {
@@ -226,11 +243,7 @@ export default function MapsPage() {
     } catch (e) {}
   }
 
-  // Detect geometry type
-  }
-
-  // Process uploaded file
-  // Split GeoJSON by geometry type (like Kepler.gl)
+  // Split GeoJSON by geometry type
   const splitByGeometryType = (geojson: any, baseName: string) => {
     const features = geojson.features || [geojson]
     const points: any[] = []
@@ -248,21 +261,21 @@ export default function MapsPage() {
     
     if (points.length > 0) {
       result.push({
-        name: polygons.length > 0 || lines.length > 0 ? `${baseName} (Points)` : baseName,
+        name: polygons.length > 0 || lines.length > 0 ? `${baseName} · Points` : baseName,
         type: "point",
         data: { type: "FeatureCollection", features: points }
       })
     }
     if (lines.length > 0) {
       result.push({
-        name: points.length > 0 || polygons.length > 0 ? `${baseName} (Lines)` : baseName,
+        name: points.length > 0 || polygons.length > 0 ? `${baseName} · Lines` : baseName,
         type: "line", 
         data: { type: "FeatureCollection", features: lines }
       })
     }
     if (polygons.length > 0) {
       result.push({
-        name: points.length > 0 || lines.length > 0 ? `${baseName} (Polygons)` : baseName,
+        name: points.length > 0 || lines.length > 0 ? `${baseName} · Polygons` : baseName,
         type: "polygon",
         data: { type: "FeatureCollection", features: polygons }
       })
@@ -271,6 +284,7 @@ export default function MapsPage() {
     return result
   }
 
+  // Process uploaded file
   const processFile = async (file: File) => {
     setUploading(true)
     try {
@@ -296,18 +310,18 @@ export default function MapsPage() {
         id: `${Date.now()}-${i}`,
         name: group.name,
         visible: true,
-        color: COLORS[(layers.length + i) % COLORS.length],
+        color: LAYER_COLORS[(layers.length + i) % LAYER_COLORS.length],
         opacity: 0.8,
         data: group.data,
         type: group.type,
-        vizType: "default",
-        height: 1000
+        vizType: group.type === "point" ? "point" : group.type === "line" ? "line" : "fill",
+        height: 1000,
+        radius: 1000
       }))
 
       setLayers(prev => [...prev, ...newLayers])
       setActivePanel("layers")
       
-      // Fit to first new layer
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
       alert(err instanceof Error ? err.message : "Upload failed")
@@ -331,12 +345,13 @@ export default function MapsPage() {
         id: `${Date.now()}-${i}`,
         name: group.name,
         visible: true,
-        color: COLORS[(layers.length + i) % COLORS.length],
+        color: LAYER_COLORS[(layers.length + i) % LAYER_COLORS.length],
         opacity: 0.8,
         data: group.data,
         type: group.type,
-        vizType: "default",
-        height: 1000
+        vizType: group.type === "point" ? "point" : group.type === "line" ? "line" : "fill",
+        height: 1000,
+        radius: 1000
       }))
 
       setLayers(prev => [...prev, ...newLayers])
@@ -349,54 +364,15 @@ export default function MapsPage() {
     }
   }
 
-  // Toggle layer visibility
-  const toggleLayer = (id: string) => {
-    setLayers(prev => prev.map(l => 
-      l.id === id ? { ...l, visible: !l.visible } : l
-    ))
-  }
+  // Layer update functions
+  const toggleLayer = (id: string) => setLayers(prev => prev.map(l => l.id === id ? { ...l, visible: !l.visible } : l))
+  const updateLayerColor = (id: string, color: number[]) => setLayers(prev => prev.map(l => l.id === id ? { ...l, color } : l))
+  const updateLayerOpacity = (id: string, opacity: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, opacity } : l))
+  const updateLayerVizType = (id: string, vizType: VizType) => setLayers(prev => prev.map(l => l.id === id ? { ...l, vizType } : l))
+  const updateLayerRadius = (id: string, radius: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, radius } : l))
+  const updateLayerHeight = (id: string, height: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, height } : l))
+  const removeLayer = (id: string) => setLayers(prev => prev.filter(l => l.id !== id))
 
-  // Update layer color
-  const updateLayerColor = (id: string, color: string) => {
-    setLayers(prev => prev.map(l => 
-      l.id === id ? { ...l, color } : l
-    ))
-  }
-
-  // Update layer opacity
-  const updateLayerOpacity = (id: string, opacity: number) => {
-    setLayers(prev => prev.map(l => 
-      l.id === id ? { ...l, opacity } : l
-    ))
-  }
-
-  // Update layer viz type
-  const updateLayerVizType = (id: string, vizType: "default" | "heatmap" | "3d") => {
-    setLayers(prev => prev.map(l => 
-      l.id === id ? { ...l, vizType } : l
-    ))
-  }
-
-  // Update layer height (for 3D)
-  const updateLayerHeight = (id: string, height: number) => {
-    setLayers(prev => prev.map(l => 
-      l.id === id ? { ...l, height } : l
-    ))
-  }
-
-  // Remove layer
-  const removeLayer = (id: string) => {
-    const m = map.current
-    if (m) {
-      const layerId = `layer-${id}`
-      if (m.getLayer(layerId)) m.removeLayer(layerId)
-      if (m.getLayer(`${layerId}-outline`)) m.removeLayer(`${layerId}-outline`)
-      if (m.getSource(`source-${id}`)) m.removeSource(`source-${id}`)
-    }
-    setLayers(prev => prev.filter(l => l.id !== id))
-  }
-
-  // Handle file drop
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(false)
@@ -404,63 +380,79 @@ export default function MapsPage() {
     if (file) processFile(file)
   }
 
+  const featureCounts = (layer: Layer) => {
+    const features = layer.data?.features?.length || 0
+    return features.toLocaleString()
+  }
+
   return (
-    <div className="h-screen w-screen flex bg-slate-900 overflow-hidden">
+    <div className="h-screen w-screen flex bg-[#242730] overflow-hidden font-['Inter',system-ui,sans-serif]">
       {/* Sidebar */}
-      <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col">
-        {/* Logo */}
-        <div className="p-4 border-b border-slate-800">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center">
-              <span className="text-white">🗺️</span>
+      <div className="w-[340px] bg-[#29323c] flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="p-5 border-b border-[#3a4552]">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-[#6b5ce7] to-[#8b7cf7] rounded-xl flex items-center justify-center shadow-lg">
+              <span className="text-white text-lg">🗺️</span>
             </div>
-            <span className="font-bold text-white text-lg">Spatix</span>
+            <div>
+              <span className="font-semibold text-white text-lg tracking-tight">Spatix</span>
+              <p className="text-[11px] text-[#6a7485] font-medium">Map Visualization Studio</p>
+            </div>
           </Link>
         </div>
 
-        {/* Panel Tabs */}
-        <div className="flex border-b border-slate-800">
+        {/* Tabs */}
+        <div className="flex border-b border-[#3a4552]">
           <button
             onClick={() => setActivePanel("layers")}
-            className={`flex-1 py-3 text-sm font-medium transition-colors ${
-              activePanel === "layers" ? "text-white bg-slate-800" : "text-slate-400 hover:text-white"
+            className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition-all ${
+              activePanel === "layers" 
+                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]" 
+                : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]/50"
             }`}
           >
             Layers ({layers.length})
           </button>
           <button
             onClick={() => setActivePanel("add")}
-            className={`flex-1 py-3 text-sm font-medium transition-colors ${
-              activePanel === "add" ? "text-white bg-slate-800" : "text-slate-400 hover:text-white"
+            className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition-all ${
+              activePanel === "add" 
+                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]" 
+                : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]/50"
             }`}
           >
-            + Add Data
+            Add Data
           </button>
         </div>
 
-        {/* Panel Content */}
+        {/* Content */}
         <div className="flex-1 overflow-y-auto">
           {activePanel === "layers" && (
             <div className="p-4 space-y-3">
               {layers.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-slate-500 text-sm">No layers yet</p>
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-[#3a4552] rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl opacity-50">📊</span>
+                  </div>
+                  <p className="text-[#6a7485] text-sm font-medium">No layers yet</p>
                   <button
                     onClick={() => setActivePanel("add")}
-                    className="mt-3 text-brand-400 text-sm hover:text-brand-300"
+                    className="mt-4 text-[#6b5ce7] text-sm font-semibold hover:text-[#8b7cf7] transition-colors"
                   >
                     + Add your first layer
                   </button>
                 </div>
               ) : (
                 layers.map(layer => (
-                  <div key={layer.id} className="bg-slate-800 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
+                  <div key={layer.id} className="bg-[#3a4552] rounded-xl overflow-hidden">
+                    {/* Layer header */}
+                    <div className="p-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3 min-w-0">
                         <button
                           onClick={() => toggleLayer(layer.id)}
-                          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                            layer.visible ? "bg-brand-500 border-brand-500" : "border-slate-600"
+                          className={`w-5 h-5 rounded flex items-center justify-center transition-all flex-shrink-0 ${
+                            layer.visible ? "bg-[#6b5ce7]" : "bg-[#242730] border border-[#6a7485]"
                           }`}
                         >
                           {layer.visible && (
@@ -469,110 +461,86 @@ export default function MapsPage() {
                             </svg>
                           )}
                         </button>
-                        <span className="text-white text-sm font-medium truncate max-w-[140px]">{layer.name}</span>
+                        <div className="min-w-0">
+                          <p className="text-white text-sm font-medium truncate">{layer.name}</p>
+                          <p className="text-[#6a7485] text-xs">{featureCounts(layer)} features</p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => fitToLayer(layer)}
-                          className="p-1.5 text-slate-400 hover:text-white transition-colors"
-                          title="Zoom to layer"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                          </svg>
+                        <button onClick={() => fitToLayer(layer)} className="p-2 text-[#6a7485] hover:text-white hover:bg-[#242730] rounded-lg transition-all" title="Zoom to fit">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                         </button>
-                        <button
-                          onClick={() => removeLayer(layer.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-400 transition-colors"
-                          title="Remove layer"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
+                        <button onClick={() => removeLayer(layer.id)} className="p-2 text-[#6a7485] hover:text-red-400 hover:bg-[#242730] rounded-lg transition-all" title="Remove">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
                       </div>
                     </div>
                     
-                    {/* Color */}
-                    <div className="mb-3">
-                      <label className="block text-xs text-slate-500 mb-2">Color</label>
-                      <div className="flex gap-1">
-                        {COLORS.map(color => (
-                          <button
-                            key={color}
-                            onClick={() => updateLayerColor(layer.id, color)}
-                            className={`w-6 h-6 rounded-md transition-transform hover:scale-110 ${
-                              layer.color === color ? "ring-2 ring-white ring-offset-2 ring-offset-slate-800" : ""
-                            }`}
-                            style={{ backgroundColor: color }}
-                          />
-                        ))}
+                    {/* Layer controls */}
+                    <div className="px-4 pb-4 space-y-4">
+                      {/* Viz Type */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Visualization</label>
+                        <div className="grid grid-cols-3 gap-1">
+                          {layer.type === "point" && (
+                            <>
+                              <button onClick={() => updateLayerVizType(layer.id, "point")} className={`py-2 text-xs font-medium rounded-lg transition-all ${layer.vizType === "point" ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>Point</button>
+                              <button onClick={() => updateLayerVizType(layer.id, "heatmap")} className={`py-2 text-xs font-medium rounded-lg transition-all ${layer.vizType === "heatmap" ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>Heatmap</button>
+                              <button onClick={() => updateLayerVizType(layer.id, "hexagon")} className={`py-2 text-xs font-medium rounded-lg transition-all ${layer.vizType === "hexagon" ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>Hexagon</button>
+                            </>
+                          )}
+                          {layer.type === "polygon" && (
+                            <>
+                              <button onClick={() => updateLayerVizType(layer.id, "fill")} className={`py-2 text-xs font-medium rounded-lg transition-all ${layer.vizType === "fill" ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>Fill</button>
+                              <button onClick={() => updateLayerVizType(layer.id, "3d")} className={`py-2 text-xs font-medium rounded-lg transition-all ${layer.vizType === "3d" ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>3D</button>
+                            </>
+                          )}
+                          {layer.type === "line" && (
+                            <button onClick={() => updateLayerVizType(layer.id, "line")} className="col-span-3 py-2 text-xs font-medium rounded-lg bg-[#6b5ce7] text-white">Line</button>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Visualization Type */}
-                    <div className="mb-3">
-                      <label className="block text-xs text-slate-500 mb-2">Visualization</label>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => updateLayerVizType(layer.id, "default")}
-                          className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                            layer.vizType === "default" ? "bg-brand-500 text-white" : "bg-slate-700 text-slate-400 hover:text-white"
-                          }`}
-                        >
-                          {layer.type === "point" ? "Point" : layer.type === "line" ? "Line" : "Fill"}
-                        </button>
-                        {layer.type === "point" && (
-                          <button
-                            onClick={() => updateLayerVizType(layer.id, "heatmap")}
-                            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                              layer.vizType === "heatmap" ? "bg-brand-500 text-white" : "bg-slate-700 text-slate-400 hover:text-white"
-                            }`}
-                          >
-                            🔥 Heat
-                          </button>
-                        )}
-                        {layer.type === "polygon" && (
-                          <button
-                            onClick={() => updateLayerVizType(layer.id, "3d")}
-                            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                              layer.vizType === "3d" ? "bg-brand-500 text-white" : "bg-slate-700 text-slate-400 hover:text-white"
-                            }`}
-                          >
-                            🏗️ 3D
-                          </button>
-                        )}
+                      {/* Color */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Color</label>
+                        <div className="flex gap-1.5">
+                          {LAYER_COLORS.map((color, i) => (
+                            <button
+                              key={i}
+                              onClick={() => updateLayerColor(layer.id, color)}
+                              className={`w-7 h-7 rounded-lg transition-all hover:scale-110 ${
+                                layer.color.toString() === color.toString() ? "ring-2 ring-white ring-offset-2 ring-offset-[#3a4552]" : ""
+                              }`}
+                              style={{ backgroundColor: `rgb(${color.join(",")})` }}
+                            />
+                          ))}
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Height (for 3D) */}
-                    {layer.vizType === "3d" && (
-                      <div className="mb-3">
-                        <label className="block text-xs text-slate-500 mb-2">Height: {layer.height?.toLocaleString() || 1000}m</label>
-                        <input
-                          type="range"
-                          min="100"
-                          max="10000"
-                          step="100"
-                          value={layer.height || 1000}
-                          onChange={(e) => updateLayerHeight(layer.id, parseInt(e.target.value))}
-                          className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-500"
-                        />
+                      {/* Radius (for heatmap/hexagon) */}
+                      {(layer.vizType === "heatmap" || layer.vizType === "hexagon") && (
+                        <div>
+                          <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">
+                            Radius: {layer.radius?.toLocaleString()}
+                          </label>
+                          <input type="range" min="10" max={layer.vizType === "hexagon" ? "50000" : "100"} value={layer.radius || 30} onChange={(e) => updateLayerRadius(layer.id, parseInt(e.target.value))} className="w-full h-1 bg-[#242730] rounded-lg appearance-none cursor-pointer accent-[#6b5ce7]" />
+                        </div>
+                      )}
+
+                      {/* Height (for 3D) */}
+                      {layer.vizType === "3d" && (
+                        <div>
+                          <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Height: {layer.height?.toLocaleString()}m</label>
+                          <input type="range" min="100" max="50000" step="100" value={layer.height || 1000} onChange={(e) => updateLayerHeight(layer.id, parseInt(e.target.value))} className="w-full h-1 bg-[#242730] rounded-lg appearance-none cursor-pointer accent-[#6b5ce7]" />
+                        </div>
+                      )}
+
+                      {/* Opacity */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Opacity: {Math.round(layer.opacity * 100)}%</label>
+                        <input type="range" min="0.1" max="1" step="0.05" value={layer.opacity} onChange={(e) => updateLayerOpacity(layer.id, parseFloat(e.target.value))} className="w-full h-1 bg-[#242730] rounded-lg appearance-none cursor-pointer accent-[#6b5ce7]" />
                       </div>
-                    )}
-
-                    {/* Opacity */}
-                    <div>
-                      <label className="block text-xs text-slate-500 mb-2">Opacity</label>
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="1"
-                        step="0.05"
-                        value={layer.opacity}
-                        onChange={(e) => updateLayerOpacity(layer.id, parseFloat(e.target.value))}
-                        className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-500"
-                      />
                     </div>
                   </div>
                 ))
@@ -581,55 +549,51 @@ export default function MapsPage() {
           )}
 
           {activePanel === "add" && (
-            <div className="p-4 space-y-4">
-              {/* Upload zone */}
+            <div className="p-4 space-y-6">
+              {/* Upload */}
               <div
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
-                  dragOver 
-                    ? "border-brand-500 bg-brand-500/10" 
-                    : "border-slate-700 hover:border-slate-600"
+                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                  dragOver ? "border-[#6b5ce7] bg-[#6b5ce7]/10" : "border-[#3a4552] hover:border-[#6a7485]"
                 }`}
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  accept=".geojson,.json,.csv,.kml,.gpx,.zip"
-                  onChange={(e) => e.target.files?.[0] && processFile(e.target.files[0])}
-                />
+                <input ref={fileInputRef} type="file" className="hidden" accept=".geojson,.json,.csv,.kml,.gpx,.zip" onChange={(e) => e.target.files?.[0] && processFile(e.target.files[0])} />
                 {uploading ? (
-                  <div className="flex items-center justify-center gap-2 text-slate-400">
-                    <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
-                    Processing...
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 rounded-full border-4 border-[#6b5ce7] border-t-transparent animate-spin" />
+                    <p className="text-white text-sm font-medium">Processing...</p>
                   </div>
                 ) : (
                   <>
-                    <div className="text-3xl mb-2">📂</div>
-                    <p className="text-white text-sm font-medium">Drop file or click to upload</p>
-                    <p className="text-slate-500 text-xs mt-1">GeoJSON, Shapefile, KML, CSV, GPX</p>
+                    <div className="w-14 h-14 bg-[#3a4552] rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-7 h-7 text-[#6a7485]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                    </div>
+                    <p className="text-white text-sm font-semibold mb-1">Drop file to upload</p>
+                    <p className="text-[#6a7485] text-xs">GeoJSON, Shapefile, KML, CSV, GPX</p>
                   </>
                 )}
               </div>
 
-              {/* Sample datasets */}
+              {/* Samples */}
               <div>
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Sample Datasets</h3>
+                <h3 className="text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-3">Sample Datasets</h3>
                 <div className="space-y-2">
                   {SAMPLE_DATASETS.map(sample => (
                     <button
                       key={sample.id}
                       onClick={() => loadSample(sample)}
                       disabled={uploading}
-                      className="w-full flex items-center gap-3 p-3 bg-slate-800 rounded-xl hover:bg-slate-700 transition-colors text-left disabled:opacity-50"
+                      className="w-full flex items-center gap-4 p-4 bg-[#3a4552] rounded-xl hover:bg-[#424d5c] transition-all text-left disabled:opacity-50 group"
                     >
-                      <span className="text-2xl">{sample.icon}</span>
+                      <div className="w-10 h-10 bg-[#242730] rounded-xl flex items-center justify-center text-xl group-hover:scale-110 transition-transform">{sample.icon}</div>
                       <div>
-                        <p className="text-white text-sm font-medium">{sample.name}</p>
-                        <p className="text-slate-500 text-xs">{sample.description}</p>
+                        <p className="text-white text-sm font-semibold">{sample.name}</p>
+                        <p className="text-[#6a7485] text-xs">{sample.description}</p>
                       </div>
                     </button>
                   ))}
@@ -639,22 +603,12 @@ export default function MapsPage() {
           )}
         </div>
 
-        {/* Basemap selector */}
-        <div className="p-4 border-t border-slate-800">
-          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Base Map</label>
+        {/* Basemap */}
+        <div className="p-4 border-t border-[#3a4552]">
+          <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Base Map</label>
           <div className="grid grid-cols-4 gap-1.5">
             {Object.entries(BASEMAPS).map(([key, { name }]) => (
-              <button
-                key={key}
-                onClick={() => setBasemap(key)}
-                className={`py-2 text-xs font-medium rounded-lg transition-colors ${
-                  basemap === key 
-                    ? "bg-brand-500 text-white" 
-                    : "bg-slate-800 text-slate-400 hover:text-white"
-                }`}
-              >
-                {name}
-              </button>
+              <button key={key} onClick={() => setBasemap(key)} className={`py-2 text-xs font-semibold rounded-lg transition-all ${basemap === key ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>{name}</button>
             ))}
           </div>
         </div>
