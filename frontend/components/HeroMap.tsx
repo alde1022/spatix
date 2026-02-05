@@ -133,7 +133,7 @@ export default function HeroMap() {
   }, [vizType, mapLoaded])
 
   return (
-    <div className="w-full h-full relative bg-slate-200 rounded-b-xl overflow-hidden">
+    <div className="w-full h-full relative bg-slate-200 rounded-b-xl overflow-hidden [&_.maplibregl-ctrl-bottom-right]:!bottom-3 [&_.maplibregl-ctrl-bottom-right]:!right-3">
       <div ref={mapContainer} className="absolute inset-0" />
       
       {/* Toggle buttons */}
@@ -166,7 +166,7 @@ export default function HeroMap() {
 
       {/* Legend for bubbles */}
       {vizType === "bubbles" && (
-        <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur rounded-lg px-3 py-2 shadow-lg z-10">
+        <div className="absolute top-3 right-3 bg-white/95 backdrop-blur rounded-lg px-3 py-2 shadow-lg z-10">
           <div className="text-[10px] font-semibold text-slate-600 mb-1">Daily Visitors</div>
           <div className="flex items-center gap-2 text-[10px]">
             <span className="w-2 h-2 rounded-full bg-green-500"></span>
