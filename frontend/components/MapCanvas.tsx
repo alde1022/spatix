@@ -20,6 +20,7 @@ export interface MapConfig {
   geojson: any
 }
 
+// Free basemaps that actually work
 const BASEMAPS = {
   light: {
     name: "Light",
@@ -27,26 +28,23 @@ const BASEMAPS = {
     preview: "bg-slate-100"
   },
   dark: {
-    name: "Dark",
+    name: "Dark", 
     url: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
     preview: "bg-slate-800"
   },
   streets: {
     name: "Streets",
-    url: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+    url: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json", 
     preview: "bg-amber-100"
   },
+  satellite: {
+    name: "Satellite",
+    // Using ESRI free satellite tiles
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    preview: "bg-emerald-800",
+    isRaster: true
+  },
 }
-
-// Beautiful color palettes
-const COLOR_PALETTES = [
-  { name: "Ocean", colors: ["#0ea5e9", "#0284c7", "#0369a1", "#075985"] },
-  { name: "Forest", colors: ["#22c55e", "#16a34a", "#15803d", "#166534"] },
-  { name: "Sunset", colors: ["#f97316", "#ea580c", "#c2410c", "#9a3412"] },
-  { name: "Berry", colors: ["#a855f7", "#9333ea", "#7c3aed", "#6d28d9"] },
-  { name: "Rose", colors: ["#f43f5e", "#e11d48", "#be123c", "#9f1239"] },
-  { name: "Slate", colors: ["#64748b", "#475569", "#334155", "#1e293b"] },
-]
 
 const QUICK_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#64748b"]
 
@@ -56,9 +54,18 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
   const [loaded, setLoaded] = useState(false)
   const [basemap, setBasemap] = useState<keyof typeof BASEMAPS>("light")
   const [featureColor, setFeatureColor] = useState("#3b82f6")
-  const [fillOpacity, setFillOpacity] = useState(0.4)
+  const [fillOpacity, setFillOpacity] = useState(0.6)
   const [strokeWidth, setStrokeWidth] = useState(2)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [savedMapUrl, setSavedMapUrl] = useState<string | null>(null)
+
+  // Store geojson in ref to access in callbacks
+  const geojsonRef = useRef(geojson)
+  geojsonRef.current = geojson
+
+  // Store style settings in refs for callbacks
+  const styleRef = useRef({ featureColor, fillOpacity, strokeWidth })
+  styleRef.current = { featureColor, fillOpacity, strokeWidth }
 
   // Count features
   const featureCount = useMemo(() => {
@@ -74,51 +81,25 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
     return { points, lines, polygons, total: points + lines + polygons }
   }, [geojson])
 
-  // Initialize map
-  useEffect(() => {
-    if (!mapContainer.current || map.current) return
-
-    map.current = new maplibregl.Map({
-      container: mapContainer.current,
-      style: BASEMAPS[basemap].url,
-      center: [0, 20],
-      zoom: 2,
-      attributionControl: false,
-    })
-
-    map.current.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
-    map.current.addControl(new maplibregl.ScaleControl({ maxWidth: 100 }), "bottom-left")
-    map.current.on("load", () => setLoaded(true))
-
-    return () => {
-      map.current?.remove()
-      map.current = null
-    }
-  }, [])
-
-  // Change basemap
-  useEffect(() => {
-    if (!map.current || !loaded) return
-    map.current.setStyle(BASEMAPS[basemap].url)
-    map.current.once("style.load", () => {
-      addDataLayer()
-    })
-  }, [basemap, loaded])
-
-  // Add/update data layer
-  const addDataLayer = () => {
-    if (!map.current || !geojson) return
+  // Add data layers function
+  const addDataLayers = () => {
+    if (!map.current || !geojsonRef.current) return
     
-    // Remove existing
-    ["geojson-fill", "geojson-line", "geojson-point", "geojson-point-stroke"].forEach(id => {
-      if (map.current?.getLayer(id)) map.current.removeLayer(id)
+    const m = map.current
+    const { featureColor, fillOpacity, strokeWidth } = styleRef.current
+    
+    // Remove existing layers
+    const layerIds = ["geojson-fill", "geojson-line", "geojson-point-stroke", "geojson-point"]
+    layerIds.forEach(id => {
+      if (m.getLayer(id)) m.removeLayer(id)
     })
-    if (map.current.getSource("geojson-data")) map.current.removeSource("geojson-data")
+    if (m.getSource("geojson-data")) m.removeSource("geojson-data")
 
-    map.current.addSource("geojson-data", { type: "geojson", data: geojson })
+    // Add source
+    m.addSource("geojson-data", { type: "geojson", data: geojsonRef.current })
 
-    // Polygons
-    map.current.addLayer({
+    // Polygon fills
+    m.addLayer({
       id: "geojson-fill",
       type: "fill",
       source: "geojson-data",
@@ -129,90 +110,184 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
       filter: ["==", "$type", "Polygon"]
     })
 
-    // Lines
-    map.current.addLayer({
+    // Lines (also outlines polygons)
+    m.addLayer({
       id: "geojson-line",
       type: "line",
       source: "geojson-data",
       paint: { 
         "line-color": featureColor, 
         "line-width": strokeWidth,
+        "line-opacity": Math.min(1, fillOpacity + 0.3),
         "line-cap": "round",
         "line-join": "round"
       }
     })
 
-    // Points with stroke
-    map.current.addLayer({
+    // Point strokes (white outline)
+    m.addLayer({
       id: "geojson-point-stroke",
       type: "circle",
       source: "geojson-data",
       paint: {
         "circle-color": "#ffffff",
         "circle-radius": 8,
+        "circle-opacity": fillOpacity,
       },
       filter: ["==", "$type", "Point"]
     })
 
-    map.current.addLayer({
+    // Points
+    m.addLayer({
       id: "geojson-point",
       type: "circle",
       source: "geojson-data",
       paint: {
         "circle-color": featureColor,
         "circle-radius": 6,
+        "circle-opacity": fillOpacity,
       },
       filter: ["==", "$type", "Point"]
     })
-
-    // Fit bounds
-    fitToBounds()
   }
 
+  // Fit to bounds
   const fitToBounds = () => {
-    if (!map.current || !geojson) return
+    if (!map.current || !geojsonRef.current) return
     try {
       const bounds = new maplibregl.LngLatBounds()
       const addCoords = (coords: any) => {
         if (typeof coords[0] === "number") bounds.extend(coords as [number, number])
         else coords.forEach(addCoords)
       }
-      const features = geojson.features || [geojson]
+      const features = geojsonRef.current.features || [geojsonRef.current]
       features.forEach((f: any) => {
         if (f.geometry?.coordinates) addCoords(f.geometry.coordinates)
       })
       if (!bounds.isEmpty()) {
-        map.current.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1000 })
+        map.current.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 })
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Error fitting bounds:", e)
+    }
   }
 
-  // Initial load
+  // Initialize map
   useEffect(() => {
-    if (loaded && geojson) addDataLayer()
-  }, [loaded, geojson])
+    if (!mapContainer.current || map.current) return
 
-  // Update styles
+    const style = BASEMAPS[basemap].isRaster 
+      ? createRasterStyle(BASEMAPS[basemap].url)
+      : BASEMAPS[basemap].url
+
+    map.current = new maplibregl.Map({
+      container: mapContainer.current,
+      style: style,
+      center: [0, 20],
+      zoom: 2,
+      attributionControl: false,
+    })
+
+    map.current.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
+    map.current.addControl(new maplibregl.ScaleControl({ maxWidth: 100 }), "bottom-left")
+    
+    map.current.on("load", () => {
+      setLoaded(true)
+      addDataLayers()
+      fitToBounds()
+    })
+
+    return () => {
+      map.current?.remove()
+      map.current = null
+    }
+  }, [])
+
+  // Create raster style for satellite
+  const createRasterStyle = (tileUrl: string) => ({
+    version: 8 as const,
+    sources: {
+      "raster-tiles": {
+        type: "raster" as const,
+        tiles: [tileUrl],
+        tileSize: 256,
+      }
+    },
+    layers: [{
+      id: "raster-layer",
+      type: "raster" as const,
+      source: "raster-tiles",
+    }]
+  })
+
+  // Change basemap - re-add layers after style loads
   useEffect(() => {
     if (!map.current || !loaded) return
-    if (map.current.getLayer("geojson-fill")) {
-      map.current.setPaintProperty("geojson-fill", "fill-color", featureColor)
-      map.current.setPaintProperty("geojson-fill", "fill-opacity", fillOpacity)
-    }
-    if (map.current.getLayer("geojson-line")) {
-      map.current.setPaintProperty("geojson-line", "line-color", featureColor)
-      map.current.setPaintProperty("geojson-line", "line-width", strokeWidth)
-    }
-    if (map.current.getLayer("geojson-point")) {
-      map.current.setPaintProperty("geojson-point", "circle-color", featureColor)
+    
+    const style = BASEMAPS[basemap].isRaster 
+      ? createRasterStyle(BASEMAPS[basemap].url)
+      : BASEMAPS[basemap].url
+
+    map.current.setStyle(style)
+    
+    // Re-add data layers after new style loads
+    map.current.once("style.load", () => {
+      addDataLayers()
+    })
+  }, [basemap])
+
+  // Update paint properties when style changes
+  useEffect(() => {
+    if (!map.current || !loaded) return
+    const m = map.current
+    
+    try {
+      if (m.getLayer("geojson-fill")) {
+        m.setPaintProperty("geojson-fill", "fill-color", featureColor)
+        m.setPaintProperty("geojson-fill", "fill-opacity", fillOpacity)
+      }
+      if (m.getLayer("geojson-line")) {
+        m.setPaintProperty("geojson-line", "line-color", featureColor)
+        m.setPaintProperty("geojson-line", "line-width", strokeWidth)
+        m.setPaintProperty("geojson-line", "line-opacity", Math.min(1, fillOpacity + 0.3))
+      }
+      if (m.getLayer("geojson-point")) {
+        m.setPaintProperty("geojson-point", "circle-color", featureColor)
+        m.setPaintProperty("geojson-point", "circle-opacity", fillOpacity)
+      }
+      if (m.getLayer("geojson-point-stroke")) {
+        m.setPaintProperty("geojson-point-stroke", "circle-opacity", fillOpacity)
+      }
+    } catch (e) {
+      // Layer might not exist yet
     }
   }, [featureColor, fillOpacity, strokeWidth, loaded])
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!map.current || !onSave) return
     const center = map.current.getCenter()
-    onSave({ basemap, featureColor, fillOpacity, center: [center.lng, center.lat], zoom: map.current.getZoom(), geojson })
+    
+    // Call parent save handler
+    onSave({ 
+      basemap, 
+      featureColor, 
+      fillOpacity, 
+      center: [center.lng, center.lat], 
+      zoom: map.current.getZoom(), 
+      geojson 
+    })
   }
+
+  // Receive saved URL from parent
+  useEffect(() => {
+    // Listen for saved URL via custom event or check localStorage
+    const checkSaved = () => {
+      const url = localStorage.getItem('spatix_last_saved_url')
+      if (url) setSavedMapUrl(url)
+    }
+    window.addEventListener('spatix_map_saved', checkSaved)
+    return () => window.removeEventListener('spatix_map_saved', checkSaved)
+  }, [])
 
   return (
     <div className="fixed inset-0 z-50 flex bg-slate-900">
@@ -228,9 +303,11 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
               <span className="font-bold text-slate-900">Style Editor</span>
             </div>
           </div>
-          <p className="text-sm text-slate-500 mt-1">
-            {featureCount.total} feature{featureCount.total !== 1 ? "s" : ""} loaded
-          </p>
+          <div className="flex gap-3 mt-2 text-xs text-slate-500">
+            {featureCount.points > 0 && <span>{featureCount.points} point{featureCount.points !== 1 ? 's' : ''}</span>}
+            {featureCount.lines > 0 && <span>{featureCount.lines} line{featureCount.lines !== 1 ? 's' : ''}</span>}
+            {featureCount.polygons > 0 && <span>{featureCount.polygons} polygon{featureCount.polygons !== 1 ? 's' : ''}</span>}
+          </div>
         </div>
 
         {/* Controls */}
@@ -238,7 +315,7 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
           {/* Basemap */}
           <div className="p-5 border-b border-slate-100">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Base Map</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {Object.entries(BASEMAPS).map(([key, { name, preview }]) => (
                 <button
                   key={key}
@@ -288,12 +365,12 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
           {/* Opacity & Stroke */}
           <div className="p-5">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-              Fill Opacity
+              Opacity
             </label>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 mb-5">
               <input
                 type="range"
-                min="0"
+                min="0.1"
                 max="1"
                 step="0.05"
                 value={fillOpacity}
@@ -305,7 +382,7 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
               </span>
             </div>
 
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 mt-5">
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Stroke Width
             </label>
             <div className="flex items-center gap-3">
@@ -339,13 +416,13 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
               </>
             ) : (
               <>
-                <span>✓</span> Save & Share
+                <span>✓</span> Save & Get Link
               </>
             )}
           </button>
           {onClose && (
             <button onClick={onClose} className="w-full py-2.5 text-slate-500 hover:text-slate-700 text-sm font-medium transition-colors">
-              ← Back
+              ← Start over
             </button>
           )}
         </div>
