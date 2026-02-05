@@ -8,6 +8,7 @@ import Navbar from "@/components/Navbar"
 import UploadZone from "@/components/UploadZone"
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false })
+const MapPreview = dynamic(() => import("@/components/MapPreview"), { ssr: false })
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
 
@@ -359,19 +360,14 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                {/* Map preview placeholder */}
-                <div className="aspect-[4/3] bg-gradient-to-br from-blue-100 via-green-50 to-blue-50 relative">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="text-6xl mb-4">🗺️</div>
-                      <p className="text-slate-500 text-sm">Interactive map preview</p>
-                    </div>
-                  </div>
-                  {/* Fake map points */}
-                  <div className="absolute top-1/4 left-1/3 w-4 h-4 bg-brand-500 rounded-full shadow-lg animate-pulse"></div>
-                  <div className="absolute top-1/2 left-1/2 w-4 h-4 bg-brand-500 rounded-full shadow-lg animate-pulse delay-100"></div>
-                  <div className="absolute bottom-1/3 right-1/4 w-4 h-4 bg-brand-500 rounded-full shadow-lg animate-pulse delay-200"></div>
-                </div>
+                {/* Live interactive map preview */}
+                <MapPreview 
+                  className="aspect-[4/3]" 
+                  style="light"
+                  color="#6366f1"
+                  interactive={true}
+                  animate={true}
+                />
               </div>
               
               {/* Floating badges */}
