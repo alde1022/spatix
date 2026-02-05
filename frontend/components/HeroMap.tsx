@@ -21,7 +21,15 @@ export default function HeroMap() {
       center: [-122.42, 37.77],
       zoom: 12,
       attributionControl: false,
+      interactive: true,
+      scrollZoom: true,
+      dragPan: true,
+      dragRotate: false,
+      touchZoomRotate: true,
     })
+    
+    // Add zoom controls
+    m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
 
     m.on("load", () => {
       map.current = m
