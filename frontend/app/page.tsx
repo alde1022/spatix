@@ -361,13 +361,13 @@ export default function Home() {
                   </div>
                 </div>
                 {/* Live interactive map preview */}
-                <MapPreview 
-                  className="aspect-[4/3] min-h-[300px]" 
-                  style="light"
-                  color="#6366f1"
-                  interactive={true}
-                  animate={true}
-                />
+                <div className="aspect-[4/3] min-h-[300px] relative bg-[#242730] overflow-hidden">
+                  <iframe 
+                    src="/maps?demo=1" 
+                    className="absolute inset-0 w-full h-full border-0 pointer-events-auto"
+                    style={{ transform: 'scale(1)', transformOrigin: 'top left' }}
+                  />
+                </div>
               </div>
               
               {/* Floating badges */}

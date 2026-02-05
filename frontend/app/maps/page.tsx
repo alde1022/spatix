@@ -88,6 +88,7 @@ interface Layer {
 
 export default function MapsPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
+  const [demoLoaded, setDemoLoaded] = useState(false)
   const map = useRef<maplibregl.Map | null>(null)
   const deckOverlay = useRef<MapboxOverlay | null>(null)
   const [mapReady, setMapReady] = useState(false)
@@ -215,9 +216,58 @@ export default function MapsPage() {
       map.current = m
       setMapReady(true)
       
-      // Check for example data passed from homepage
+      // Check for demo mode (from homepage preview) or example data
+      const urlParams = new URLSearchParams(window.location.search)
+      const isDemo = urlParams.get('demo') === '1'
       const exampleData = localStorage.getItem('spatix_example_data')
-      if (exampleData) {
+      
+      if (isDemo && !demoLoaded) {
+        setDemoLoaded(true)
+        // Load demo data
+        const demoGeojson = {
+          type: "FeatureCollection",
+          features: [
+            { type: "Feature", properties: { name: "Blue Bottle Coffee" }, geometry: { type: "Point", coordinates: [-122.4086, 37.7823] }},
+            { type: "Feature", properties: { name: "Sightglass Coffee" }, geometry: { type: "Point", coordinates: [-122.4105, 37.7715] }},
+            { type: "Feature", properties: { name: "Ritual Coffee" }, geometry: { type: "Point", coordinates: [-122.4215, 37.7565] }},
+            { type: "Feature", properties: { name: "Philz Coffee" }, geometry: { type: "Point", coordinates: [-122.4335, 37.7642] }},
+            { type: "Feature", properties: { name: "Four Barrel" }, geometry: { type: "Point", coordinates: [-122.4223, 37.7672] }},
+            { type: "Feature", properties: { name: "Embarcadero Walk" }, geometry: { type: "LineString", coordinates: [[-122.3932, 37.7956], [-122.3889, 37.7897], [-122.3878, 37.7834], [-122.3901, 37.7765]] }},
+            { type: "Feature", properties: { name: "Golden Gate Park" }, geometry: { type: "Polygon", coordinates: [[[-122.5108, 37.7712], [-122.4534, 37.7712], [-122.4534, 37.7654], [-122.5108, 37.7654], [-122.5108, 37.7712]]] }},
+          ]
+        }
+        const layerGroups = splitByGeometryType(demoGeojson, 'SF Demo Data')
+        const newLayers: Layer[] = layerGroups.map((group, i) => ({
+          id: `demo-${Date.now()}-${i}`,
+          name: group.name,
+          visible: true,
+          color: LAYER_COLORS[i % LAYER_COLORS.length],
+          opacity: 0.8,
+          data: group.data,
+          type: group.type,
+          vizType: group.type === "point" ? "point" : group.type === "line" ? "line" : "fill",
+          height: 1000,
+          radius: 1000
+        }))
+        setLayers(newLayers)
+        setActivePanel("layers")
+        setTimeout(() => {
+          if (map.current && newLayers[0]?.data) {
+            const bounds = new maplibregl.LngLatBounds()
+            const addCoords = (coords: any) => {
+              if (typeof coords[0] === "number") bounds.extend(coords as [number, number])
+              else coords.forEach(addCoords)
+            }
+            newLayers.forEach(layer => {
+              const features = layer.data?.features || []
+              features.forEach((f: any) => f.geometry?.coordinates && addCoords(f.geometry.coordinates))
+            })
+            if (!bounds.isEmpty()) {
+              map.current.fitBounds(bounds, { padding: 80, maxZoom: 12, duration: 800 })
+            }
+          }
+        }, 300)
+      } else if (exampleData) {
         try {
           const { geojson, name } = JSON.parse(exampleData)
           localStorage.removeItem('spatix_example_data') // Clear it
