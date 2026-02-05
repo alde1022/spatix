@@ -9,6 +9,7 @@ import UploadZone from "@/components/UploadZone"
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false })
 const MapPreview = dynamic(() => import("@/components/MapPreview"), { ssr: false })
+const HeroMap = dynamic(() => import("@/components/HeroMap"), { ssr: false })
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
 
@@ -361,12 +362,8 @@ export default function Home() {
                   </div>
                 </div>
                 {/* Live interactive map preview */}
-                <div className="aspect-[4/3] min-h-[300px] relative bg-[#242730] overflow-hidden">
-                  <iframe 
-                    src="/maps?demo=1" 
-                    className="absolute inset-0 w-full h-full border-0 pointer-events-auto"
-                    style={{ transform: 'scale(1)', transformOrigin: 'top left' }}
-                  />
+                <div className="aspect-[4/3] min-h-[300px] relative overflow-hidden">
+                  <HeroMap />
                 </div>
               </div>
               
