@@ -3,6 +3,7 @@
 import { useState } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
+import Navbar from "@/components/Navbar"
 import UploadZone from "@/components/UploadZone"
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false })
@@ -153,17 +154,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center"><span className="text-white text-xl">🗺️</span></div>
-          <span className="font-bold text-xl text-slate-900">Spatix</span>
-        </Link>
-        <div className="flex items-center gap-6">
-          <Link href="/developers" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Developers</Link>
-          <Link href="/pricing" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Pricing</Link>
-          <Link href="/login" className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">Sign In</Link>
-        </div>
-      </nav>
+      <Navbar />
 
       <main className="max-w-4xl mx-auto px-6 py-16 text-center">
         <div className="inline-flex items-center gap-2 px-4 py-2 bg-brand-100 text-brand-700 rounded-full text-sm font-medium mb-6">
