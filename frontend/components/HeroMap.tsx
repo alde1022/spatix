@@ -4,30 +4,35 @@ import { useRef, useEffect, useState } from "react"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 
-// Demo data
-const DEMO_GEOJSON = {
-  type: "FeatureCollection",
-  features: [
-    { type: "Feature", properties: { name: "Blue Bottle Coffee" }, geometry: { type: "Point", coordinates: [-122.4086, 37.7823] }},
-    { type: "Feature", properties: { name: "Sightglass Coffee" }, geometry: { type: "Point", coordinates: [-122.4105, 37.7715] }},
-    { type: "Feature", properties: { name: "Ritual Coffee" }, geometry: { type: "Point", coordinates: [-122.4215, 37.7565] }},
-    { type: "Feature", properties: { name: "Philz Coffee" }, geometry: { type: "Point", coordinates: [-122.4335, 37.7642] }},
-    { type: "Feature", properties: { name: "Verve Coffee" }, geometry: { type: "Point", coordinates: [-122.4052, 37.7821] }},
-    { type: "Feature", properties: { name: "Embarcadero Route" }, geometry: { type: "LineString", coordinates: [[-122.393, 37.795], [-122.389, 37.790], [-122.388, 37.783], [-122.390, 37.777]] }},
-    { type: "Feature", properties: { name: "Golden Gate Park" }, geometry: { type: "Polygon", coordinates: [[[-122.511, 37.771], [-122.453, 37.771], [-122.453, 37.765], [-122.511, 37.765], [-122.511, 37.771]]] }},
-  ]
-}
+// Demo points - SF coffee shops
+const POINTS = [
+  [-122.4086, 37.7823],
+  [-122.4105, 37.7715],
+  [-122.4215, 37.7565],
+  [-122.4335, 37.7642],
+  [-122.4052, 37.7821],
+  [-122.4223, 37.7672],
+  [-122.4178, 37.7538],
+  [-122.4312, 37.7891],
+  [-122.3987, 37.7756],
+  [-122.4445, 37.7612],
+  [-122.4156, 37.7834],
+  [-122.4278, 37.7589],
+]
 
-const LAYERS = [
-  { name: "SF Coffee Shops", type: "point", count: 5, color: "#6366f1", visible: true },
-  { name: "Embarcadero Route", type: "line", count: 1, color: "#22c55e", visible: true },
-  { name: "Golden Gate Park", type: "polygon", count: 1, color: "#f59e0b", visible: true },
+type VizType = "points" | "bubbles" | "heatmap"
+
+const VIZ_OPTIONS: { id: VizType; label: string; icon: string }[] = [
+  { id: "points", label: "Points", icon: "●" },
+  { id: "bubbles", label: "Bubbles", icon: "◉" },
+  { id: "heatmap", label: "Heatmap", icon: "▣" },
 ]
 
 export default function HeroMap() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [vizType, setVizType] = useState<VizType>("points")
 
   useEffect(() => {
     if (!mapContainer.current || map.current) return
@@ -35,58 +40,78 @@ export default function HeroMap() {
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-      center: [-122.435, 37.770],
+      center: [-122.42, 37.77],
       zoom: 11.5,
       interactive: true,
       attributionControl: false,
     })
 
-    m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
-
     m.on("load", () => {
       map.current = m
-      
-      m.addSource("data", { type: "geojson", data: DEMO_GEOJSON as any })
 
-      // Polygon fill
-      m.addLayer({
-        id: "polygon-fill",
-        type: "fill",
-        source: "data",
-        filter: ["==", "$type", "Polygon"],
-        paint: { "fill-color": "#f59e0b", "fill-opacity": 0.3 }
+      // Add source
+      m.addSource("points", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: POINTS.map((coords, i) => ({
+            type: "Feature",
+            properties: { value: Math.random() * 50 + 10 },
+            geometry: { type: "Point", coordinates: coords }
+          }))
+        }
       })
 
-      // Polygon outline
+      // Points layer
       m.addLayer({
-        id: "polygon-line",
-        type: "line",
-        source: "data",
-        filter: ["==", "$type", "Polygon"],
-        paint: { "line-color": "#f59e0b", "line-width": 2 }
-      })
-
-      // Lines
-      m.addLayer({
-        id: "line",
-        type: "line",
-        source: "data",
-        filter: ["==", "$type", "LineString"],
-        paint: { "line-color": "#22c55e", "line-width": 4 }
-      })
-
-      // Points
-      m.addLayer({
-        id: "points",
+        id: "viz-points",
         type: "circle",
-        source: "data",
-        filter: ["==", "$type", "Point"],
+        source: "points",
         paint: {
           "circle-radius": 8,
           "circle-color": "#6366f1",
           "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff"
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": 1
         }
+      })
+
+      // Bubbles layer (hidden initially)
+      m.addLayer({
+        id: "viz-bubbles",
+        type: "circle",
+        source: "points",
+        paint: {
+          "circle-radius": ["*", ["get", "value"], 0.8],
+          "circle-color": "#6366f1",
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": 0.6
+        },
+        layout: { visibility: "none" }
+      })
+
+      // Heatmap layer (hidden initially)
+      m.addLayer({
+        id: "viz-heatmap",
+        type: "heatmap",
+        source: "points",
+        paint: {
+          "heatmap-weight": ["get", "value"],
+          "heatmap-intensity": 0.6,
+          "heatmap-radius": 30,
+          "heatmap-color": [
+            "interpolate", ["linear"], ["heatmap-density"],
+            0, "rgba(0,0,0,0)",
+            0.2, "#6366f1",
+            0.4, "#818cf8",
+            0.6, "#a5b4fc",
+            0.8, "#c7d2fe",
+            1, "#e0e7ff"
+          ],
+          "heatmap-opacity": 0.8
+        },
+        layout: { visibility: "none" }
       })
 
       setLoaded(true)
@@ -95,58 +120,62 @@ export default function HeroMap() {
     return () => { m.remove(); map.current = null }
   }, [])
 
-  return (
-    <div className="flex h-full bg-[#29323c]">
-      {/* Sidebar */}
-      <div className="w-[180px] flex-shrink-0 bg-[#29323c] border-r border-[#3a4552] flex flex-col">
-        {/* Logo */}
-        <div className="p-3 border-b border-[#3a4552]">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-gradient-to-br from-[#6b5ce7] to-[#8b7cf7] rounded-lg flex items-center justify-center">
-              <span className="text-white text-sm">🗺️</span>
-            </div>
-            <span className="font-semibold text-white text-sm">Spatix</span>
-          </div>
-        </div>
-        
-        {/* Tabs */}
-        <div className="flex text-[10px] border-b border-[#3a4552]">
-          <div className="flex-1 py-2 text-center text-white bg-[#3a4552] border-b-2 border-[#6b5ce7] font-medium">Layers</div>
-          <div className="flex-1 py-2 text-center text-[#6a7485]">Add Data</div>
-        </div>
+  // Update visualization when type changes
+  useEffect(() => {
+    const m = map.current
+    if (!m || !loaded) return
 
-        {/* Layers */}
-        <div className="flex-1 overflow-auto p-2 space-y-1.5">
-          {LAYERS.map((layer, i) => (
-            <div key={i} className="bg-[#3a4552] rounded-lg p-2">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-3 h-3 rounded" style={{ backgroundColor: layer.color }} />
-                <span className="text-white text-[10px] font-medium truncate">{layer.name}</span>
-              </div>
-              <div className="text-[9px] text-[#6a7485]">{layer.count} feature{layer.count > 1 ? 's' : ''}</div>
-            </div>
+    const layers = ["viz-points", "viz-bubbles", "viz-heatmap"]
+    layers.forEach(layer => {
+      if (m.getLayer(layer)) {
+        m.setLayoutProperty(layer, "visibility", "none")
+      }
+    })
+
+    const activeLayer = `viz-${vizType}`
+    if (m.getLayer(activeLayer)) {
+      m.setLayoutProperty(activeLayer, "visibility", "visible")
+    }
+  }, [vizType, loaded])
+
+  return (
+    <div className="relative h-full bg-[#242730]">
+      {/* Map */}
+      <div ref={mapContainer} className="absolute inset-0" />
+      
+      {/* Loading */}
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#242730]">
+          <div className="animate-spin w-8 h-8 border-3 border-[#6366f1] border-t-transparent rounded-full" />
+        </div>
+      )}
+
+      {/* Visualization Toggle */}
+      {loaded && (
+        <div className="absolute top-4 left-4 bg-[#1e1e24]/90 backdrop-blur-sm rounded-xl p-1 flex gap-1 shadow-xl border border-white/10">
+          {VIZ_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => setVizType(opt.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                vizType === opt.id
+                  ? "bg-[#6366f1] text-white shadow-lg"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              <span className="text-base">{opt.icon}</span>
+              {opt.label}
+            </button>
           ))}
         </div>
+      )}
 
-        {/* Basemap */}
-        <div className="p-2 border-t border-[#3a4552]">
-          <div className="text-[9px] text-[#6a7485] mb-1.5 font-medium">BASE MAP</div>
-          <div className="grid grid-cols-2 gap-1">
-            <div className="py-1 text-[9px] text-[#6a7485] bg-[#242730] rounded text-center">Light</div>
-            <div className="py-1 text-[9px] text-white bg-[#6b5ce7] rounded text-center font-medium">Dark</div>
-          </div>
+      {/* Info badge */}
+      {loaded && (
+        <div className="absolute bottom-4 left-4 bg-[#1e1e24]/90 backdrop-blur-sm rounded-lg px-3 py-2 text-xs text-white/70 border border-white/10">
+          <span className="text-white font-medium">12 locations</span> · SF Coffee Shops
         </div>
-      </div>
-
-      {/* Map */}
-      <div className="flex-1 relative">
-        <div ref={mapContainer} className="absolute inset-0" />
-        {!loaded && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#242730]">
-            <div className="animate-spin w-6 h-6 border-2 border-[#6b5ce7] border-t-transparent rounded-full" />
-          </div>
-        )}
-      </div>
+      )}
     </div>
   )
 }
