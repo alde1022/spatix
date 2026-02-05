@@ -205,36 +205,61 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
     const m = map.current
     if (!m || !mapReady || !geojson) return
     
-    // Wait for layers to be added, then fit bounds
-    const doFit = () => {
+    // Calculate bounds from geojson
+    const calculateBounds = () => {
+      const bounds = new maplibregl.LngLatBounds()
+      const addCoords = (coords: any) => {
+        if (Array.isArray(coords) && typeof coords[0] === "number" && coords.length >= 2) {
+          // coords is [lng, lat]
+          bounds.extend([coords[0], coords[1]])
+        } else if (Array.isArray(coords)) {
+          coords.forEach(addCoords)
+        }
+      }
+      const features = geojson.features || [geojson]
+      features.forEach((f: any) => {
+        if (f.geometry?.coordinates) addCoords(f.geometry.coordinates)
+      })
+      return bounds
+    }
+    
+    const bounds = calculateBounds()
+    if (bounds.isEmpty()) return
+    
+    // Function to perform the zoom
+    const doZoom = () => {
+      if (!map.current) return
       try {
-        const bounds = new maplibregl.LngLatBounds()
-        const addCoords = (coords: any) => {
-          if (Array.isArray(coords) && typeof coords[0] === "number") {
-            bounds.extend(coords as [number, number])
-          } else if (Array.isArray(coords)) {
-            coords.forEach(addCoords)
-          }
-        }
-        const features = geojson.features || [geojson]
-        features.forEach((f: any) => {
-          if (f.geometry?.coordinates) addCoords(f.geometry.coordinates)
+        map.current.fitBounds(bounds, { 
+          padding: { top: 80, bottom: 80, left: 80, right: 80 },
+          maxZoom: 14, 
+          duration: 800 
         })
-        if (!bounds.isEmpty()) {
-          m.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 500 })
-        }
       } catch (e) {
-        console.error("Auto-zoom error:", e)
+        console.error("fitBounds error:", e)
       }
     }
     
-    // Multiple attempts to ensure it works
-    const t1 = setTimeout(doFit, 100)
-    const t2 = setTimeout(doFit, 500)
+    // Try immediately
+    doZoom()
+    
+    // Also try after map is idle (ensures style is loaded)
+    const onIdle = () => {
+      doZoom()
+      m.off("idle", onIdle)
+    }
+    m.on("idle", onIdle)
+    
+    // Fallback timeouts
+    const t1 = setTimeout(doZoom, 200)
+    const t2 = setTimeout(doZoom, 600)
+    const t3 = setTimeout(doZoom, 1000)
     
     return () => {
+      m.off("idle", onIdle)
       clearTimeout(t1)
       clearTimeout(t2)
+      clearTimeout(t3)
     }
   }, [geojson, mapReady])
 
