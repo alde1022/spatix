@@ -200,6 +200,17 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
     }
   }, []) // Only run once on mount
 
+  // Fit to bounds when geojson changes
+  useEffect(() => {
+    if (mapReady && geojson) {
+      // Small delay to ensure layers are added
+      const timer = setTimeout(() => {
+        fitBounds()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [geojson, mapReady, fitBounds])
+
   // Handle basemap changes
   useEffect(() => {
     const m = map.current
