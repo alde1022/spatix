@@ -362,7 +362,7 @@ export default function Home() {
                   </div>
                 </div>
                 {/* Live interactive map preview */}
-                <div className="aspect-[4/3] min-h-[300px] relative overflow-hidden">
+                <div className="aspect-[4/3] relative overflow-hidden" style={{ minHeight: '350px' }}>
                   <HeroMap />
                 </div>
               </div>
