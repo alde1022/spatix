@@ -37,16 +37,23 @@ const SAMPLE_DATASETS = [
   {
     id: "earthquakes",
     name: "Global Earthquakes",
-    description: "2,000+ seismic events worldwide",
+    description: "10,000+ seismic events (past month)",
     icon: "🌍",
     url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
   },
   {
-    id: "airports",
-    name: "World Airports",
-    description: "Major international airports",
-    icon: "✈️",
-    url: "https://raw.githubusercontent.com/datasets/airport-codes/master/data/airport-codes.csv"
+    id: "earthquakes-significant",
+    name: "Significant Earthquakes",
+    description: "Major earthquakes (M4.5+) past month",
+    icon: "💥",
+    url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson"
+  },
+  {
+    id: "world-countries",
+    name: "World Countries",
+    description: "Country boundaries (low res)",
+    icon: "🗺️",
+    url: "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
   },
 ]
 
