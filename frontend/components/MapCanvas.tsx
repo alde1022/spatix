@@ -62,8 +62,8 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<string>("light")
   const [featureColor, setFeatureColor] = useState("#3b82f6")
-  const [fillOpacity, setFillOpacity] = useState(0.6)
-  const [strokeWidth, setStrokeWidth] = useState(2)
+  const [fillOpacity, setFillOpacity] = useState(0.8)
+  const [strokeWidth, setStrokeWidth] = useState(4)
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
   // Feature counts
