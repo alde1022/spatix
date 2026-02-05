@@ -4,28 +4,60 @@ Handles email/password auth, OAuth, password reset, email verification
 Compatible with existing database.py pattern (psycopg2/sqlite sync)
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr
-from typing import Optional
-from datetime import datetime, timedelta
+from pydantic import BaseModel, EmailStr, field_validator
+from typing import Optional, List
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse, quote, urlencode
 import secrets
 import bcrypt
 import jwt
 import os
 import httpx
+import re
+import logging
 
 # Import existing database module
 from database import get_db, USE_POSTGRES
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Config
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production")
+# Config - JWT_SECRET is REQUIRED in production
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET:
+    if os.environ.get("ENVIRONMENT", "development") == "production":
+        raise RuntimeError("JWT_SECRET environment variable is required in production")
+    import warnings
+    warnings.warn("JWT_SECRET not set! Using insecure default for development only.", RuntimeWarning)
+    JWT_SECRET = "dev-only-insecure-secret-" + secrets.token_hex(16)
+
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://spatix.io")
-API_URL = os.environ.get("API_URL", "https://spatix-production.up.railway.app")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
+
+# Allowed redirect hosts for open redirect protection
+ALLOWED_REDIRECT_HOSTS = {
+    urlparse(FRONTEND_URL).netloc,
+    "localhost",
+    "localhost:3000",
+    "127.0.0.1",
+}
+
+# Rate limiting for auth endpoints (in-memory, use Redis in production)
+_auth_rate_limits: dict = {}
+AUTH_RATE_LIMIT_WINDOW = 300  # 5 minutes
+AUTH_RATE_LIMIT_MAX_LOGIN = 10  # 10 login attempts per 5 minutes
+AUTH_RATE_LIMIT_MAX_SIGNUP = 5  # 5 signup attempts per 5 minutes
+
+# Cookie settings
+COOKIE_NAME = "spatix_auth"
+COOKIE_MAX_AGE = JWT_EXPIRY_HOURS * 3600
+COOKIE_SECURE = os.environ.get("ENVIRONMENT", "development") == "production"
+COOKIE_SAMESITE = "lax"
 
 # Google OAuth
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -75,11 +107,12 @@ def generate_token(length: int = 32) -> str:
     return secrets.token_hex(length)
 
 def create_jwt(user_id: int, email: str) -> str:
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "email": email,
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS)
+        "iat": now,
+        "exp": now + timedelta(hours=JWT_EXPIRY_HOURS)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -91,8 +124,110 @@ def verify_jwt(token: str) -> Optional[dict]:
     except jwt.InvalidTokenError:
         return None
 
+def validate_password_strength(password: str) -> tuple[bool, str]:
+    """Validate password meets complexity requirements."""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters"
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one number"
+    return True, ""
+
+def check_rate_limit(key: str, max_requests: int) -> bool:
+    """Check if request is within rate limit. Returns True if allowed."""
+    now = datetime.now(timezone.utc)
+
+    if key not in _auth_rate_limits:
+        _auth_rate_limits[key] = []
+
+    # Clean old entries
+    cutoff = now - timedelta(seconds=AUTH_RATE_LIMIT_WINDOW)
+    _auth_rate_limits[key] = [t for t in _auth_rate_limits[key] if t > cutoff]
+
+    if len(_auth_rate_limits[key]) >= max_requests:
+        return False
+
+    _auth_rate_limits[key].append(now)
+    return True
+
+def is_safe_redirect(url: str) -> bool:
+    """Check if redirect URL is safe (same origin or allowed host)."""
+    if not url:
+        return False
+
+    # Allow relative URLs starting with /
+    if url.startswith('/') and not url.startswith('//'):
+        return True
+
+    try:
+        parsed = urlparse(url)
+        # Check if host is in allowed list
+        return parsed.netloc in ALLOWED_REDIRECT_HOSTS or not parsed.netloc
+    except Exception:
+        return False
+
+def get_safe_redirect(url: str, default: str = "/account") -> str:
+    """Get safe redirect URL or return default."""
+    if is_safe_redirect(url):
+        return url
+    return default
+
+def set_auth_cookie(response: Response, token: str):
+    """Set secure HttpOnly auth cookie."""
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        path="/",
+    )
+
+def clear_auth_cookie(response: Response):
+    """Clear auth cookie."""
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+
 
 # ============ Database Helpers ============
+
+def _convert_postgres_to_sqlite_query(query: str) -> str:
+    """Convert PostgreSQL parameterized query to SQLite format.
+
+    Uses regex to only replace %s that are not inside string literals.
+    """
+    # Simple approach: count placeholders and replace them
+    # This is safe because we're only replacing the placeholder syntax
+    result = []
+    i = 0
+    in_string = False
+    string_char = None
+
+    while i < len(query):
+        char = query[i]
+
+        # Track string literals
+        if char in ("'", '"') and (i == 0 or query[i-1] != '\\'):
+            if not in_string:
+                in_string = True
+                string_char = char
+            elif char == string_char:
+                in_string = False
+                string_char = None
+
+        # Replace %s only outside strings
+        if not in_string and query[i:i+2] == '%s':
+            result.append('?')
+            i += 2
+            continue
+
+        result.append(char)
+        i += 1
+
+    return ''.join(result)
 
 def db_execute(query: str, params: tuple = (), fetch_one: bool = False, fetch_all: bool = False):
     """Execute database query with proper driver handling."""
@@ -100,7 +235,6 @@ def db_execute(query: str, params: tuple = (), fetch_one: bool = False, fetch_al
         if USE_POSTGRES:
             from psycopg2.extras import RealDictCursor
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Convert %s to $1, $2 for asyncpg compatibility... wait no, psycopg2 uses %s
                 cur.execute(query, params)
                 if fetch_one:
                     result = cur.fetchone()
@@ -111,10 +245,11 @@ def db_execute(query: str, params: tuple = (), fetch_one: bool = False, fetch_al
                 try:
                     result = cur.fetchone()
                     return dict(result) if result else None
-                except:
+                except Exception:
                     return None
         else:
-            cur = conn.execute(query.replace('%s', '?'), params)
+            sqlite_query = _convert_postgres_to_sqlite_query(query)
+            cur = conn.execute(sqlite_query, params)
             if fetch_one:
                 result = cur.fetchone()
                 return dict(result) if result else None
@@ -126,26 +261,39 @@ def db_execute(query: str, params: tuple = (), fetch_one: bool = False, fetch_al
 # ============ Endpoints ============
 
 @router.post("/signup", status_code=201)
-async def signup(req: SignupRequest):
+async def signup(req: SignupRequest, request: Request):
     """Create new account with email/password"""
-    
-    if len(req.password) < 8:
-        raise HTTPException(400, "Password must be at least 8 characters")
-    
-    email = req.email.lower()
-    
+
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"signup:{client_ip}", AUTH_RATE_LIMIT_MAX_SIGNUP):
+        raise HTTPException(429, "Too many signup attempts. Please try again later.")
+
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(req.password)
+    if not is_valid:
+        raise HTTPException(400, error_msg)
+
+    email = req.email.lower().strip()
+
     # Check if email exists
     existing = db_execute(
-        "SELECT id FROM users WHERE email = %s", 
-        (email,), 
+        "SELECT id FROM users WHERE email = %s",
+        (email,),
         fetch_one=True
     )
+
+    # Prevent email enumeration: always return success message
+    # but only create account if email doesn't exist
     if existing:
-        raise HTTPException(409, "Email already registered")
-    
+        # Log for monitoring but don't reveal to user
+        logger.info(f"Signup attempt for existing email: {email[:3]}***")
+        # Return same response to prevent enumeration
+        return {"message": "If this email is not registered, a verification link has been sent."}
+
     # Create user
     password_hash = hash_password(req.password)
-    
+
     with get_db() as conn:
         if USE_POSTGRES:
             from psycopg2.extras import RealDictCursor
@@ -156,7 +304,7 @@ async def signup(req: SignupRequest):
                     (email, password_hash)
                 )
                 user = dict(cur.fetchone())
-                
+
                 # Create verification token
                 token = generate_token()
                 cur.execute(
@@ -171,52 +319,60 @@ async def signup(req: SignupRequest):
                 (email, password_hash)
             )
             user = dict(conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone())
-            
+
             token = generate_token()
             conn.execute(
                 """INSERT INTO email_verification_tokens (user_id, token, expires_at)
                    VALUES (?, ?, datetime('now', '+24 hours'))""",
                 (user["id"], token)
             )
-    
+
     # Send verification email
     try:
         await send_verification_email(email, token)
     except Exception as e:
-        print(f"Failed to send verification email: {e}")
-    
-    return {"message": "Account created. Please check your email to verify.", "user_id": user["id"]}
+        logger.error(f"Failed to send verification email: {e}")
+
+    return {"message": "If this email is not registered, a verification link has been sent."}
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request, response: Response):
     """Authenticate with email/password"""
-    
-    email = req.email.lower()
-    
+
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"login:{client_ip}", AUTH_RATE_LIMIT_MAX_LOGIN):
+        raise HTTPException(429, "Too many login attempts. Please try again later.")
+
+    email = req.email.lower().strip()
+
     user = db_execute(
         "SELECT id, email, password_hash, email_verified, auth_provider FROM users WHERE email = %s",
         (email,),
         fetch_one=True
     )
-    
+
     if not user:
         raise HTTPException(401, "Invalid email or password")
-    
+
     if not user.get("password_hash"):
         provider = user.get("auth_provider") or "OAuth"
         raise HTTPException(401, f"This account uses {provider} sign-in")
-    
+
     if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
-    
+
     if not user.get("email_verified"):
         raise HTTPException(403, detail="Please verify your email first")
-    
+
     token = create_jwt(user["id"], user["email"])
-    
+
+    # Set HttpOnly cookie for security
+    set_auth_cookie(response, token)
+
     return {
-        "token": token,
+        "token": token,  # Also return token for backwards compatibility
         "user": {
             "id": user["id"],
             "email": user["email"],
@@ -225,16 +381,28 @@ async def login(req: LoginRequest):
     }
 
 
+@router.post("/logout")
+async def logout(response: Response):
+    """Log out and clear auth cookie"""
+    clear_auth_cookie(response)
+    return {"message": "Logged out successfully"}
+
+
 @router.post("/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest):
+async def forgot_password(req: ForgotPasswordRequest, request: Request):
     """Request password reset email"""
-    
-    email = req.email.lower()
+
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"forgot:{client_ip}", AUTH_RATE_LIMIT_MAX_LOGIN):
+        raise HTTPException(429, "Too many requests. Please try again later.")
+
+    email = req.email.lower().strip()
     user = db_execute("SELECT id, email FROM users WHERE email = %s", (email,), fetch_one=True)
-    
+
     if user:
         token = generate_token()
-        
+
         with get_db() as conn:
             if USE_POSTGRES:
                 with conn.cursor() as cur:
@@ -251,22 +419,31 @@ async def forgot_password(req: ForgotPasswordRequest):
                        VALUES (?, ?, datetime('now', '+1 hour'))""",
                     (user["id"], token)
                 )
-        
+
         try:
             await send_password_reset_email(email, token)
         except Exception as e:
-            print(f"Failed to send reset email: {e}")
-    
+            logger.error(f"Failed to send reset email: {e}")
+
     return {"message": "If an account exists with that email, a reset link has been sent."}
 
 
 @router.post("/reset-password")
-async def reset_password(req: ResetPasswordRequest):
+async def reset_password(req: ResetPasswordRequest, request: Request):
     """Reset password using token"""
-    
-    if len(req.password) < 8:
-        raise HTTPException(400, "Password must be at least 8 characters")
-    
+
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"reset:{client_ip}", AUTH_RATE_LIMIT_MAX_LOGIN):
+        raise HTTPException(429, "Too many requests. Please try again later.")
+
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(req.password)
+    if not is_valid:
+        raise HTTPException(400, error_msg)
+
+    now = datetime.now(timezone.utc)
+
     with get_db() as conn:
         if USE_POSTGRES:
             from psycopg2.extras import RealDictCursor
@@ -279,18 +456,22 @@ async def reset_password(req: ResetPasswordRequest):
                     (req.token,)
                 )
                 token_row = cur.fetchone()
-                
+
                 if not token_row:
                     raise HTTPException(400, "Invalid or expired reset link")
-                
+
                 token_row = dict(token_row)
-                
+
                 if token_row["used"]:
                     raise HTTPException(400, "This reset link has already been used")
-                
-                if token_row["expires_at"] < datetime.utcnow():
+
+                # Handle timezone-aware comparison
+                expires_at = token_row["expires_at"]
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at < now:
                     raise HTTPException(400, "This reset link has expired")
-                
+
                 password_hash = hash_password(req.password)
                 cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, token_row["user_id"]))
                 cur.execute("UPDATE password_reset_tokens SET used = TRUE WHERE id = %s", (token_row["id"],))
@@ -302,30 +483,32 @@ async def reset_password(req: ResetPasswordRequest):
                    WHERE t.token = ?""",
                 (req.token,)
             ).fetchone()
-            
+
             if not token_row:
                 raise HTTPException(400, "Invalid or expired reset link")
-            
+
             token_row = dict(token_row)
-            
+
             if token_row["used"]:
                 raise HTTPException(400, "This reset link has already been used")
-            
-            expires_at = datetime.fromisoformat(token_row["expires_at"])
-            if expires_at < datetime.utcnow():
+
+            expires_at = datetime.fromisoformat(token_row["expires_at"]).replace(tzinfo=timezone.utc)
+            if expires_at < now:
                 raise HTTPException(400, "This reset link has expired")
-            
+
             password_hash = hash_password(req.password)
             conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, token_row["user_id"]))
             conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE id = ?", (token_row["id"],))
-    
+
     return {"message": "Password updated successfully"}
 
 
 @router.get("/verify-email")
 async def verify_email(token: str):
     """Verify email address via link"""
-    
+
+    now = datetime.now(timezone.utc)
+
     with get_db() as conn:
         if USE_POSTGRES:
             from psycopg2.extras import RealDictCursor
@@ -335,10 +518,16 @@ async def verify_email(token: str):
                     (token,)
                 )
                 token_row = cur.fetchone()
-                
-                if not token_row or token_row["expires_at"] < datetime.utcnow():
+
+                if not token_row:
                     return RedirectResponse(f"{FRONTEND_URL}/login?error=invalid_token")
-                
+
+                expires_at = token_row["expires_at"]
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at < now:
+                    return RedirectResponse(f"{FRONTEND_URL}/login?error=invalid_token")
+
                 cur.execute("UPDATE users SET email_verified = TRUE WHERE id = %s", (token_row["user_id"],))
                 cur.execute("DELETE FROM email_verification_tokens WHERE id = %s", (token_row["id"],))
         else:
@@ -346,18 +535,18 @@ async def verify_email(token: str):
                 "SELECT id, user_id, expires_at FROM email_verification_tokens WHERE token = ?",
                 (token,)
             ).fetchone()
-            
+
             if not token_row:
                 return RedirectResponse(f"{FRONTEND_URL}/login?error=invalid_token")
-            
+
             token_row = dict(token_row)
-            expires_at = datetime.fromisoformat(token_row["expires_at"])
-            if expires_at < datetime.utcnow():
+            expires_at = datetime.fromisoformat(token_row["expires_at"]).replace(tzinfo=timezone.utc)
+            if expires_at < now:
                 return RedirectResponse(f"{FRONTEND_URL}/login?error=invalid_token")
-            
+
             conn.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (token_row["user_id"],))
             conn.execute("DELETE FROM email_verification_tokens WHERE id = ?", (token_row["id"],))
-    
+
     return RedirectResponse(f"{FRONTEND_URL}/login?verified=true")
 
 
@@ -368,7 +557,7 @@ async def google_login():
     """Redirect to Google OAuth"""
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(500, "Google OAuth not configured")
-    
+
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -377,14 +566,15 @@ async def google_login():
         "access_type": "offline",
         "prompt": "consent"
     }
-    url = "https://accounts.google.com/o/oauth2/v2/auth?" + "&".join(f"{k}={v}" for k, v in params.items())
+    # Properly URL-encode parameters
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
     return RedirectResponse(url)
 
 
 @router.get("/google/callback")
 async def google_callback(code: str):
     """Handle Google OAuth callback"""
-    
+
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -396,31 +586,31 @@ async def google_callback(code: str):
                 "grant_type": "authorization_code"
             }
         )
-        
+
         if token_resp.status_code != 200:
             return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
-        
+
         tokens = token_resp.json()
-        
+
         userinfo_resp = await client.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
             headers={"Authorization": f"Bearer {tokens['access_token']}"}
         )
-        
+
         if userinfo_resp.status_code != 200:
             return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
-        
+
         userinfo = userinfo_resp.json()
-    
-    email = userinfo.get("email", "").lower()
+
+    email = userinfo.get("email", "").lower().strip()
     google_id = userinfo.get("id")
-    
+
     if not email:
         return RedirectResponse(f"{FRONTEND_URL}/login?error=no_email")
-    
+
     # Find or create user
-    user = db_execute("SELECT id, email FROM users WHERE email = %s", (email,), fetch_one=True)
-    
+    user = db_execute("SELECT id, email, auth_provider FROM users WHERE email = %s", (email,), fetch_one=True)
+
     with get_db() as conn:
         if USE_POSTGRES:
             from psycopg2.extras import RealDictCursor
@@ -433,10 +623,13 @@ async def google_callback(code: str):
                     )
                     user = dict(cur.fetchone())
                 else:
-                    cur.execute(
-                        "UPDATE users SET oauth_id = %s, email_verified = TRUE WHERE id = %s AND oauth_id IS NULL",
-                        (google_id, user["id"])
-                    )
+                    # Only link OAuth if user registered with Google or has no password
+                    # Don't auto-link OAuth to password accounts (security risk)
+                    if user.get("auth_provider") == "google" or user.get("auth_provider") is None:
+                        cur.execute(
+                            "UPDATE users SET oauth_id = %s, email_verified = TRUE WHERE id = %s AND (oauth_id IS NULL OR oauth_id = %s)",
+                            (google_id, user["id"], google_id)
+                        )
         else:
             if not user:
                 conn.execute(
@@ -446,23 +639,89 @@ async def google_callback(code: str):
                 )
                 user = dict(conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone())
             else:
-                conn.execute(
-                    "UPDATE users SET oauth_id = ?, email_verified = 1 WHERE id = ? AND oauth_id IS NULL",
-                    (google_id, user["id"])
-                )
-    
+                if user.get("auth_provider") == "google" or user.get("auth_provider") is None:
+                    conn.execute(
+                        "UPDATE users SET oauth_id = ?, email_verified = 1 WHERE id = ? AND (oauth_id IS NULL OR oauth_id = ?)",
+                        (google_id, user["id"], google_id)
+                    )
+
     token = create_jwt(user["id"], user["email"])
-    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}")
+
+    # Set auth cookie and redirect (cookie is more secure than URL param)
+    response = RedirectResponse(f"{FRONTEND_URL}/auth/callback")
+    set_auth_cookie(response, token)
+    return response
 
 
 # ============ Apple OAuth ============
+
+# Cache for Apple's public keys
+_apple_public_keys_cache: dict = {"keys": None, "fetched_at": None}
+APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys"
+
+
+async def get_apple_public_keys() -> list:
+    """Fetch and cache Apple's public keys for JWT verification."""
+    now = datetime.now(timezone.utc)
+
+    # Return cached keys if less than 1 hour old
+    if (_apple_public_keys_cache["keys"] and
+        _apple_public_keys_cache["fetched_at"] and
+        (now - _apple_public_keys_cache["fetched_at"]).total_seconds() < 3600):
+        return _apple_public_keys_cache["keys"]
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(APPLE_KEYS_URL)
+        if resp.status_code != 200:
+            raise Exception(f"Failed to fetch Apple public keys: {resp.status_code}")
+
+        keys_data = resp.json()
+        _apple_public_keys_cache["keys"] = keys_data.get("keys", [])
+        _apple_public_keys_cache["fetched_at"] = now
+        return _apple_public_keys_cache["keys"]
+
+
+def verify_apple_id_token(id_token: str, apple_keys: list) -> dict:
+    """Verify Apple ID token signature and return payload."""
+    # Get the key ID from token header
+    unverified_header = jwt.get_unverified_header(id_token)
+    kid = unverified_header.get("kid")
+
+    if not kid:
+        raise ValueError("No key ID in token header")
+
+    # Find matching key
+    matching_key = None
+    for key in apple_keys:
+        if key.get("kid") == kid:
+            matching_key = key
+            break
+
+    if not matching_key:
+        raise ValueError(f"No matching public key found for kid: {kid}")
+
+    # Convert JWK to PEM format for PyJWT
+    from jwt.algorithms import RSAAlgorithm
+    public_key = RSAAlgorithm.from_jwk(matching_key)
+
+    # Verify and decode the token
+    payload = jwt.decode(
+        id_token,
+        public_key,
+        algorithms=["RS256"],
+        audience=APPLE_CLIENT_ID,
+        issuer="https://appleid.apple.com"
+    )
+
+    return payload
+
 
 @router.get("/apple")
 async def apple_login():
     """Redirect to Apple Sign In"""
     if not APPLE_CLIENT_ID:
         raise HTTPException(500, "Apple Sign In not configured")
-    
+
     params = {
         "client_id": APPLE_CLIENT_ID,
         "redirect_uri": f"{API_URL}/auth/apple/callback",
@@ -470,23 +729,24 @@ async def apple_login():
         "scope": "name email",
         "response_mode": "form_post"
     }
-    url = "https://appleid.apple.com/auth/authorize?" + "&".join(f"{k}={v}" for k, v in params.items())
+    # Properly URL-encode parameters
+    url = "https://appleid.apple.com/auth/authorize?" + urlencode(params)
     return RedirectResponse(url)
 
 
 @router.post("/apple/callback")
 async def apple_callback(request: Request):
     """Handle Apple Sign In callback"""
-    
+
     form = await request.form()
     code = form.get("code")
-    
+
     if not code:
         return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
-    
+
     try:
         client_secret = generate_apple_client_secret()
-        
+
         async with httpx.AsyncClient() as client:
             token_resp = await client.post(
                 "https://appleid.apple.com/auth/token",
@@ -498,23 +758,30 @@ async def apple_callback(request: Request):
                     "redirect_uri": f"{API_URL}/auth/apple/callback"
                 }
             )
-            
+
             if token_resp.status_code != 200:
+                logger.error(f"Apple token exchange failed: {token_resp.status_code}")
                 return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
-            
+
             tokens = token_resp.json()
-        
+
         id_token = tokens.get("id_token")
-        payload = jwt.decode(id_token, options={"verify_signature": False})
-        
-        email = payload.get("email", "").lower()
+        if not id_token:
+            logger.error("No id_token in Apple response")
+            return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
+
+        # Verify token signature using Apple's public keys
+        apple_keys = await get_apple_public_keys()
+        payload = verify_apple_id_token(id_token, apple_keys)
+
+        email = payload.get("email", "").lower().strip()
         apple_id = payload.get("sub")
-        
+
         if not email:
             return RedirectResponse(f"{FRONTEND_URL}/login?error=no_email")
-        
-        user = db_execute("SELECT id, email FROM users WHERE email = %s", (email,), fetch_one=True)
-        
+
+        user = db_execute("SELECT id, email, auth_provider FROM users WHERE email = %s", (email,), fetch_one=True)
+
         with get_db() as conn:
             if USE_POSTGRES:
                 from psycopg2.extras import RealDictCursor
@@ -526,6 +793,13 @@ async def apple_callback(request: Request):
                             (email, apple_id)
                         )
                         user = dict(cur.fetchone())
+                    else:
+                        # Only link OAuth if user registered with Apple or has no password
+                        if user.get("auth_provider") == "apple" or user.get("auth_provider") is None:
+                            cur.execute(
+                                "UPDATE users SET oauth_id = %s, email_verified = TRUE WHERE id = %s AND (oauth_id IS NULL OR oauth_id = %s)",
+                                (apple_id, user["id"], apple_id)
+                            )
             else:
                 if not user:
                     conn.execute(
@@ -534,12 +808,25 @@ async def apple_callback(request: Request):
                         (email, apple_id)
                     )
                     user = dict(conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone())
-        
+                else:
+                    if user.get("auth_provider") == "apple" or user.get("auth_provider") is None:
+                        conn.execute(
+                            "UPDATE users SET oauth_id = ?, email_verified = 1 WHERE id = ? AND (oauth_id IS NULL OR oauth_id = ?)",
+                            (apple_id, user["id"], apple_id)
+                        )
+
         token = create_jwt(user["id"], user["email"])
-        return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}")
-        
+
+        # Set auth cookie and redirect (cookie is more secure than URL param)
+        response = RedirectResponse(f"{FRONTEND_URL}/auth/callback")
+        set_auth_cookie(response, token)
+        return response
+
+    except jwt.InvalidTokenError as e:
+        logger.error(f"Apple token verification failed: {e}")
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
     except Exception as e:
-        print(f"Apple auth error: {e}")
+        logger.error(f"Apple auth error: {e}")
         return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
 
 
@@ -547,34 +834,43 @@ def generate_apple_client_secret() -> str:
     """Generate client secret JWT for Apple Sign In"""
     if not APPLE_PRIVATE_KEY:
         raise ValueError("Apple private key not configured")
-    
+
+    now = datetime.now(timezone.utc)
     headers = {"kid": APPLE_KEY_ID, "alg": "ES256"}
     payload = {
         "iss": APPLE_TEAM_ID,
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(days=180),
+        "iat": now,
+        "exp": now + timedelta(days=180),
         "aud": "https://appleid.apple.com",
         "sub": APPLE_CLIENT_ID
     }
-    
+
     return jwt.encode(payload, APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
 
 
 # ============ Current User Helper ============
 
 def get_current_user_from_token(request: Request) -> Optional[dict]:
-    """Get current user from Authorization header"""
+    """Get current user from Authorization header or auth cookie"""
+    token = None
+
+    # Try Authorization header first
     auth_header = request.headers.get("Authorization")
-    
-    if not auth_header or not auth_header.startswith("Bearer "):
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+
+    # Fall back to cookie
+    if not token:
+        token = request.cookies.get(COOKIE_NAME)
+
+    if not token:
         return None
-    
-    token = auth_header.split(" ")[1]
+
     payload = verify_jwt(token)
-    
+
     if not payload:
         return None
-    
+
     return db_execute(
         "SELECT id, email, email_verified, plan FROM users WHERE id = %s",
         (payload["sub"],),

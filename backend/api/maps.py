@@ -6,24 +6,31 @@ POST /api/map - Dead simple map creation from data
 GET /api/map/{id} - Retrieve map data
 DELETE /api/map/{id} - Delete a map
 """
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Header
 from pydantic import BaseModel, model_validator, Field
 from typing import Optional, List, Union, Dict, Any, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 import secrets
 import json
 import re
 import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["maps"])
 
 # In-memory storage (replace with database in production)
+# WARNING: Data is lost on server restart. Use a database in production.
 _maps_storage: Dict[str, dict] = {}
 
 # Rate limiting
 _ip_requests: Dict[str, List[datetime]] = {}
 RATE_LIMIT_WINDOW = 3600  # 1 hour
 RATE_LIMIT_MAX = 60  # 60 maps per hour for free tier
+
+# Maximum retries for ID collision
+MAX_ID_COLLISION_RETRIES = 5
 
 
 # ==================== MODELS ====================
@@ -88,8 +95,8 @@ class MapResponse(BaseModel):
 
 def check_rate_limit(ip: str) -> bool:
     """Simple IP-based rate limiting."""
-    now = datetime.utcnow()
-    
+    now = datetime.now(timezone.utc)
+
     if ip in _ip_requests:
         _ip_requests[ip] = [
             t for t in _ip_requests[ip]
@@ -97,10 +104,10 @@ def check_rate_limit(ip: str) -> bool:
         ]
     else:
         _ip_requests[ip] = []
-    
+
     if len(_ip_requests[ip]) >= RATE_LIMIT_MAX:
         return False
-    
+
     _ip_requests[ip].append(now)
     return True
 
@@ -301,23 +308,44 @@ def auto_style(geojson: Dict) -> Dict[str, Any]:
 
 
 def generate_map_id() -> str:
-    """Generate a short unique map ID."""
-    return secrets.token_urlsafe(6)
+    """Generate a short unique map ID with collision checking."""
+    for _ in range(MAX_ID_COLLISION_RETRIES):
+        # Use 9 bytes (12 chars) for more entropy to reduce collision risk
+        map_id = secrets.token_urlsafe(9)
+        if map_id not in _maps_storage:
+            return map_id
+    # If we hit max retries, use a longer ID
+    return secrets.token_urlsafe(16)
+
+
+def generate_delete_token() -> str:
+    """Generate a secure delete token for map ownership."""
+    return secrets.token_urlsafe(32)
 
 
 # ==================== ENDPOINTS ====================
 
-@router.post("/map", response_model=MapResponse)
+class MapCreateResponse(BaseModel):
+    """Response from map creation including delete token."""
+    success: bool
+    id: str
+    url: str
+    embed: str
+    preview_url: Optional[str] = None
+    delete_token: str  # Token required for deleting the map
+
+
+@router.post("/map", response_model=MapCreateResponse)
 async def create_map(request: Request, body: MapRequest):
     """
     Create a map from data - the simplest way for AI to make maps.
-    
+
     Accepts:
     - GeoJSON (FeatureCollection, Feature, or raw Geometry)
     - Coordinate arrays: [[lng, lat], ...] or [lng, lat]
     - WKT strings: "POINT(-122 37)", "POLYGON(...)"
-    
-    Returns instant shareable URL.
+
+    Returns instant shareable URL and a delete_token for managing the map.
     """
     client_ip = request.client.host if request.client else "unknown"
     if not check_rate_limit(client_ip):
@@ -329,17 +357,18 @@ async def create_map(request: Request, body: MapRequest):
                 "retry_after": 3600
             }
         )
-    
+
     try:
         geojson = detect_and_normalize_data(body.get_data())
-        
+
         bounds = body.bounds
         if bounds == "auto" or bounds is None:
             bounds = calculate_bounds(geojson, body.markers)
-        
+
         map_id = generate_map_id()
-        now = datetime.utcnow().isoformat()
-        
+        delete_token = generate_delete_token()
+        now = datetime.now(timezone.utc).isoformat()
+
         map_config = {
             "geojson": geojson,
             "style": auto_style(geojson),
@@ -349,33 +378,38 @@ async def create_map(request: Request, body: MapRequest):
             "zoom": body.zoom,
             "markers": [m.model_dump() for m in body.markers] if body.markers else [],
         }
-        
+
+        # Hash the delete token for storage (don't store the raw token)
+        delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
+
         _maps_storage[map_id] = {
             "id": map_id,
             "title": body.title or "Untitled Map",
             "description": body.description or "",
             "config": map_config,
             "created_at": now,
-            "created_by_ip": hashlib.sha256(client_ip.encode()).hexdigest()[:16],
+            "delete_token_hash": delete_token_hash,
             "views": 0,
             "public": True
         }
-        
+
         base_url = "https://spatix.io"
         map_url = f"{base_url}/m/{map_id}"
-        
-        return MapResponse(
+
+        return MapCreateResponse(
             success=True,
             id=map_id,
             url=map_url,
             embed=f'<iframe src="{map_url}?embed=1" width="600" height="400" frameborder="0"></iframe>',
-            preview_url=f"{base_url}/api/map/{map_id}/preview.png"
+            preview_url=f"{base_url}/api/map/{map_id}/preview.png",
+            delete_token=delete_token  # Return token to client for deletion
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to create map: {str(e)}")
+        logger.error(f"Failed to create map: {e}")
+        raise HTTPException(status_code=400, detail="Failed to create map. Please check your data format.")
 
 
 @router.get("/map/{map_id}")
@@ -398,17 +432,35 @@ async def get_map(map_id: str):
 
 
 @router.delete("/map/{map_id}")
-async def delete_map(map_id: str, request: Request):
-    """Delete a map (only by original creator IP)."""
+async def delete_map(
+    map_id: str,
+    x_delete_token: Optional[str] = Header(None, alias="X-Delete-Token"),
+    delete_token: Optional[str] = None  # Also accept as query param for convenience
+):
+    """Delete a map using the delete token provided at creation.
+
+    Pass the delete_token either as:
+    - X-Delete-Token header (recommended)
+    - delete_token query parameter
+    """
     if map_id not in _maps_storage:
         raise HTTPException(status_code=404, detail="Map not found")
-    
-    client_ip = request.client.host if request.client else "unknown"
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
-    
-    if _maps_storage[map_id]["created_by_ip"] != ip_hash:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this map")
-    
+
+    # Get the token from header or query param
+    token = x_delete_token or delete_token
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Delete token required. Provide X-Delete-Token header or delete_token query parameter."
+        )
+
+    # Verify the token
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    stored_hash = _maps_storage[map_id].get("delete_token_hash")
+
+    if not stored_hash or token_hash != stored_hash:
+        raise HTTPException(status_code=403, detail="Invalid delete token")
+
     del _maps_storage[map_id]
     return {"success": True, "message": "Map deleted"}
 

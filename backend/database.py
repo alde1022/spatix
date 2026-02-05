@@ -3,7 +3,10 @@ Spatix Database Module
 PostgreSQL for auth and user management
 """
 import os
+import logging
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -11,12 +14,15 @@ if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
     import psycopg2
     from psycopg2.extras import RealDictCursor
     USE_POSTGRES = True
-    print(f"✅ Using PostgreSQL")
+    logger.info("Using PostgreSQL")
 else:
     import sqlite3
     USE_POSTGRES = False
     DB_PATH = os.environ.get("DB_PATH", "/tmp/spatix.db")
-    print(f"⚠️ Using SQLite at {DB_PATH}")
+    logger.info(f"Using SQLite at {DB_PATH}")
+
+# Track if database has been initialized
+_db_initialized = False
 
 
 @contextmanager
@@ -40,7 +46,12 @@ def get_db():
 
 
 def init_db():
-    """Initialize database tables."""
+    """Initialize database tables. Safe to call multiple times."""
+    global _db_initialized
+
+    if _db_initialized:
+        return
+
     if USE_POSTGRES:
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -55,7 +66,7 @@ def init_db():
                         plan TEXT DEFAULT 'free',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
-                    
+
                     CREATE TABLE IF NOT EXISTS password_reset_tokens (
                         id SERIAL PRIMARY KEY,
                         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -64,7 +75,7 @@ def init_db():
                         used BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT NOW()
                     );
-                    
+
                     CREATE TABLE IF NOT EXISTS email_verification_tokens (
                         id SERIAL PRIMARY KEY,
                         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -72,8 +83,9 @@ def init_db():
                         expires_at TIMESTAMP NOT NULL,
                         created_at TIMESTAMP DEFAULT NOW()
                     );
-                    
+
                     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+                    CREATE INDEX IF NOT EXISTS idx_users_oauth_id ON users(oauth_id);
                     CREATE INDEX IF NOT EXISTS idx_password_reset_token ON password_reset_tokens(token);
                     CREATE INDEX IF NOT EXISTS idx_email_verification_token ON email_verification_tokens(token);
                 """)
@@ -91,7 +103,7 @@ def init_db():
                     plan TEXT DEFAULT 'free',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS password_reset_tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -101,7 +113,7 @@ def init_db():
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS email_verification_tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -110,16 +122,27 @@ def init_db():
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+                CREATE INDEX IF NOT EXISTS idx_users_oauth_id ON users(oauth_id);
                 CREATE INDEX IF NOT EXISTS idx_password_reset_token ON password_reset_tokens(token);
                 CREATE INDEX IF NOT EXISTS idx_email_verification_token ON email_verification_tokens(token);
             """)
 
+    _db_initialized = True
+    logger.info("Database initialized successfully")
 
-# Initialize on import
-try:
-    init_db()
-    print("✅ Database initialized")
-except Exception as e:
-    print(f"⚠️ Database init failed (will retry on first use): {e}")
+
+def ensure_db_initialized():
+    """Ensure database is initialized. Call this before using the database."""
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            init_db()
+        except Exception as e:
+            logger.error(f"Database initialization failed: {e}")
+            raise
+
+
+# Lazy initialization - don't initialize on import
+# Call ensure_db_initialized() or init_db() explicitly when ready

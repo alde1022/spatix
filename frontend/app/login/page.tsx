@@ -1,16 +1,38 @@
 'use client'
 
-import { useState, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useState, Suspense, useMemo } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://spatix-production.up.railway.app'
 
+/**
+ * Validate redirect URL to prevent open redirect attacks.
+ * Only allows relative URLs starting with /
+ */
+function getSafeRedirect(url: string | null): string {
+  const defaultRedirect = '/account'
+  if (!url) return defaultRedirect
+
+  // Only allow relative URLs starting with /
+  if (url.startsWith('/') && !url.startsWith('//')) {
+    return url
+  }
+
+  return defaultRedirect
+}
+
 function LoginContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const error = searchParams.get('error')
-  const redirect = searchParams.get('redirect') || '/account'
-  
+
+  // Validate redirect URL to prevent open redirect
+  const redirect = useMemo(
+    () => getSafeRedirect(searchParams.get('redirect')),
+    [searchParams]
+  )
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -46,10 +68,14 @@ function LoginContent() {
       }
 
       const data = await res.json()
+      // Token is now set via HttpOnly cookie by the server
+      // localStorage is kept for backwards compatibility but will be removed
       if (data.token) {
         localStorage.setItem('spatix_token', data.token)
       }
-      window.location.href = redirect
+
+      // Use router.push for client-side navigation (safer than window.location)
+      router.push(redirect)
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Login failed')
     } finally {

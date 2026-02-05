@@ -1,15 +1,56 @@
 'use client'
 
-import { useState, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useState, Suspense, useMemo } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://spatix-production.up.railway.app'
 
+/**
+ * Validate redirect URL to prevent open redirect attacks.
+ * Only allows relative URLs starting with /
+ */
+function getSafeRedirect(url: string | null): string {
+  const defaultRedirect = '/account'
+  if (!url) return defaultRedirect
+
+  // Only allow relative URLs starting with /
+  if (url.startsWith('/') && !url.startsWith('//')) {
+    return url
+  }
+
+  return defaultRedirect
+}
+
+/**
+ * Validate password meets requirements
+ */
+function validatePassword(password: string): string | null {
+  if (password.length < 8) {
+    return 'Password must be at least 8 characters'
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must contain at least one lowercase letter'
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must contain at least one uppercase letter'
+  }
+  if (!/\d/.test(password)) {
+    return 'Password must contain at least one number'
+  }
+  return null
+}
+
 function SignupContent() {
   const searchParams = useSearchParams()
-  const redirect = searchParams.get('redirect') || '/account'
-  
+  const router = useRouter()
+
+  // Validate redirect URL to prevent open redirect
+  const redirect = useMemo(
+    () => getSafeRedirect(searchParams.get('redirect')),
+    [searchParams]
+  )
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -30,17 +71,18 @@ function SignupContent() {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
-    
+
     if (password !== confirmPassword) {
       setFormError('Passwords do not match')
       return
     }
-    
-    if (password.length < 8) {
-      setFormError('Password must be at least 8 characters')
+
+    const passwordError = validatePassword(password)
+    if (passwordError) {
+      setFormError(passwordError)
       return
     }
-    
+
     setLoading(true)
 
     try {
@@ -56,8 +98,8 @@ function SignupContent() {
         throw new Error(data.detail || 'Signup failed. Please try again.')
       }
 
-      // Redirect to verification or login
-      window.location.href = '/auth/verify?email=' + encodeURIComponent(email)
+      // Redirect to verification page
+      router.push('/auth/verify?email=' + encodeURIComponent(email))
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Signup failed')
     } finally {
@@ -181,7 +223,7 @@ function SignupContent() {
                   )}
                 </button>
               </div>
-              <p className="mt-1.5 text-xs text-slate-500">Must be at least 8 characters</p>
+              <p className="mt-1.5 text-xs text-slate-500">Must be at least 8 characters with uppercase, lowercase, and a number</p>
             </div>
 
             <div>
