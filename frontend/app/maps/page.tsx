@@ -188,7 +188,7 @@ export default function MapsPage() {
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
-      style: BASEMAPS[basemap].style as any,
+      style: BASEMAPS[basemap as keyof typeof BASEMAPS].style as any,
       center: [0, 20],
       zoom: 2,
       attributionControl: false,
@@ -219,7 +219,7 @@ export default function MapsPage() {
   useEffect(() => {
     const m = map.current
     if (!m || !mapReady) return
-    m.setStyle(BASEMAPS[basemap].style as any)
+    m.setStyle(BASEMAPS[basemap as keyof typeof BASEMAPS].style as any)
   }, [basemap, mapReady])
 
   // Fit to layer bounds
