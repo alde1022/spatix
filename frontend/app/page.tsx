@@ -61,10 +61,10 @@ Andytown Coffee,37.7559,-122.5070,4.7`,
     geojson: {
       type: "FeatureCollection",
       features: [
-        { type: "Feature", properties: { name: "Dipsea Trail", length: "7.4 mi" }, geometry: { type: "LineString", coordinates: [[-122.5215, 37.8976], [-122.5342, 37.8998], [-122.5521, 37.9045], [-122.5698, 37.9012], [-122.5847, 37.9012]] }},
-        { type: "Feature", properties: { name: "Tennessee Valley Trail", length: "3.4 mi" }, geometry: { type: "LineString", coordinates: [[-122.5337, 37.8652], [-122.5425, 37.8589], [-122.5523, 37.8547], [-122.5615, 37.8512]] }},
-        { type: "Feature", properties: { name: "Coastal Trail", length: "5.2 mi" }, geometry: { type: "LineString", coordinates: [[-122.5098, 37.8312], [-122.5156, 37.8398], [-122.5234, 37.8476], [-122.5312, 37.8534], [-122.5398, 37.8589]] }},
-        { type: "Feature", properties: { name: "Matt Davis Trail", length: "6.1 mi" }, geometry: { type: "LineString", coordinates: [[-122.5978, 37.9112], [-122.5876, 37.9067], [-122.5756, 37.9034], [-122.5623, 37.8998]] }},
+        { type: "Feature", properties: { name: "Dipsea Trail", length: "7.4 mi" }, geometry: { type: "LineString", coordinates: [[-122.521, 37.897], [-122.528, 37.899], [-122.535, 37.902], [-122.543, 37.904], [-122.551, 37.905], [-122.558, 37.905], [-122.566, 37.904], [-122.574, 37.902], [-122.582, 37.901], [-122.585, 37.901]] }},
+        { type: "Feature", properties: { name: "Tennessee Valley Trail", length: "3.4 mi" }, geometry: { type: "LineString", coordinates: [[-122.534, 37.865], [-122.540, 37.862], [-122.547, 37.858], [-122.553, 37.855], [-122.558, 37.852], [-122.562, 37.851]] }},
+        { type: "Feature", properties: { name: "Coastal Trail", length: "5.2 mi" }, geometry: { type: "LineString", coordinates: [[-122.510, 37.831], [-122.515, 37.838], [-122.520, 37.845], [-122.525, 37.851], [-122.530, 37.856], [-122.535, 37.860], [-122.540, 37.862]] }},
+        { type: "Feature", properties: { name: "Matt Davis Trail", length: "6.1 mi" }, geometry: { type: "LineString", coordinates: [[-122.598, 37.911], [-122.592, 37.908], [-122.586, 37.906], [-122.580, 37.904], [-122.574, 37.902], [-122.568, 37.900], [-122.562, 37.900]] }},
       ]
     }
   },
