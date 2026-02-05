@@ -270,10 +270,10 @@ async def create_map_from_text(
     user_id = None
     if authorization and authorization.startswith("Bearer "):
         try:
-            from routers.auth import verify_token
+            from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
-            payload = verify_token(token)
-            user_id = payload.get("user_id")
+            payload = verify_jwt(token)
+            user_id = payload.get("sub")
         except Exception:
             pass
 
@@ -363,10 +363,10 @@ async def create_map_from_addresses(
     user_id = None
     if authorization and authorization.startswith("Bearer "):
         try:
-            from routers.auth import verify_token
+            from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
-            payload = verify_token(token)
-            user_id = payload.get("user_id")
+            payload = verify_jwt(token)
+            user_id = payload.get("sub")
         except Exception:
             pass
 
@@ -472,10 +472,10 @@ async def create_route_map(
     user_id = None
     if authorization and authorization.startswith("Bearer "):
         try:
-            from routers.auth import verify_token
+            from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
-            payload = verify_token(token)
-            user_id = payload.get("user_id")
+            payload = verify_jwt(token)
+            user_id = payload.get("sub")
         except Exception:
             pass
 

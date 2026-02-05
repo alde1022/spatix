@@ -144,7 +144,7 @@ export default function MyMapsPage() {
               </button>
             </div>
             <Link
-              href="/"
+              href="/maps"
               className="px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-semibold flex items-center gap-2 shadow-sm"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -183,7 +183,7 @@ export default function MyMapsPage() {
               Upload a GeoJSON, Shapefile, CSV, KML, or GPX file to create your first interactive map.
             </p>
             <Link
-              href="/"
+              href="/maps"
               className="inline-flex items-center gap-2 px-6 py-3 bg-brand-600 text-white rounded-xl hover:bg-brand-700 font-semibold shadow-lg shadow-brand-600/25"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

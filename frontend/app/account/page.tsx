@@ -116,14 +116,12 @@ export default function AccountPage() {
                     {currentPlan.name} • {currentPlan.price === 0 ? 'Free forever' : `$${currentPlan.price}/${currentPlan.interval}`}
                   </p>
                 </div>
-                {currentPlan.name === 'Free' && (
-                  <Link
-                    href="/maps"
-                    className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
-                  >
-                    Upgrade
-                  </Link>
-                )}
+                <Link
+                  href="/maps"
+                  className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
+                >
+                  Create Map
+                </Link>
               </div>
             </div>
             
@@ -182,7 +180,7 @@ export default function AccountPage() {
               {getUsagePercent(usage?.maps_created || 0, currentPlan.maps) >= 80 && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
                   <p className="text-yellow-800">
-                    <strong>Running low on maps!</strong> Upgrade to Pro for 500 maps/month.
+                    <strong>Approaching map limit.</strong> Contact us for higher limits.
                   </p>
                 </div>
               )}
@@ -231,10 +229,10 @@ export default function AccountPage() {
                 href="/maps"
                 className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors"
               >
-                <span className="text-2xl">💳</span>
+                <span className="text-2xl">📧</span>
                 <div>
-                  <p className="font-medium text-slate-900">Billing</p>
-                  <p className="text-sm text-slate-500">Plans & payment</p>
+                  <p className="font-medium text-slate-900">Contact</p>
+                  <p className="text-sm text-slate-500">Need higher limits? Reach out</p>
                 </div>
               </Link>
             </div>

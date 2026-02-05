@@ -370,9 +370,9 @@ def update_map(map_id: str, title: str = None, description: str = None,
 
     with get_db() as conn:
         if USE_POSTGRES:
-            # Use CURRENT_TIMESTAMP for PostgreSQL
+            # Use CURRENT_TIMESTAMP for PostgreSQL - remove the placeholder timestamp param
             updates[-1] = "updated_at = CURRENT_TIMESTAMP"
-            params.pop(-2)  # Remove the timestamp param
+            params.pop(-2)  # Remove the None timestamp, keep map_id at end
             with conn.cursor() as cur:
                 cur.execute(f"UPDATE maps SET {', '.join(updates)} WHERE id = %s", params)
                 return cur.rowcount > 0

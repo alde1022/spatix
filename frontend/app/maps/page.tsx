@@ -120,6 +120,7 @@ export default function MapsPage() {
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
   const [loadingMyMaps, setLoadingMyMaps] = useState(false)
+  const [myMapsError, setMyMapsError] = useState<string | null>(null)
 
   // Load stored email on mount
   useEffect(() => {
@@ -135,14 +136,17 @@ export default function MapsPage() {
       return
     }
     setLoadingMyMaps(true)
+    setMyMapsError(null)
     try {
       const res = await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail)}`)
       if (res.ok) {
         const data = await res.json()
         setMyMaps(data.maps || [])
+      } else {
+        setMyMapsError("Could not load your maps")
       }
     } catch {
-      // silent fail
+      setMyMapsError("Connection failed. Check your network.")
     } finally {
       setLoadingMyMaps(false)
     }
@@ -154,7 +158,7 @@ export default function MapsPage() {
 
   // Save map to backend with email
   const handleSaveMap = async () => {
-    if (!email || !email.includes("@")) return
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return
     if (layers.length === 0) return
 
     setSaving(true)
@@ -176,7 +180,11 @@ export default function MapsPage() {
         }),
       })
 
-      if (!res.ok) throw new Error("Failed to save")
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        const msg = errData?.detail?.message || errData?.detail || "Server error"
+        throw new Error(msg)
+      }
       const data = await res.json()
 
       // Store email for next time
@@ -186,8 +194,9 @@ export default function MapsPage() {
       setSavedMapId(data.id)
       setShowSaveModal(false)
       setShowShareModal(true)
-    } catch {
-      alert("Failed to save map. Please try again.")
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error"
+      alert(`Failed to save map: ${message}`)
     } finally {
       setSaving(false)
     }
@@ -831,6 +840,18 @@ export default function MapsPage() {
                   <div className="w-10 h-10 rounded-full border-4 border-[#6b5ce7] border-t-transparent animate-spin mb-3" />
                   <p className="text-[#6a7485] text-sm">Loading your maps...</p>
                 </div>
+              ) : myMapsError ? (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-red-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-red-400 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <p className="text-red-400 text-sm font-medium mb-1">{myMapsError}</p>
+                  <button onClick={fetchMyMaps} className="text-[#6b5ce7] text-sm font-semibold hover:text-[#8b7cf7] mt-2">
+                    Try again
+                  </button>
+                </div>
               ) : myMaps.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-16 h-16 bg-[#3a4552] rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -846,8 +867,6 @@ export default function MapsPage() {
                   <a
                     key={m.id}
                     href={`/m/${m.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     className="block bg-[#3a4552] rounded-xl p-4 hover:bg-[#424d5c] transition-all group"
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -945,7 +964,7 @@ export default function MapsPage() {
               </button>
               <button
                 onClick={handleSaveMap}
-                disabled={saving || !email.includes("@")}
+                disabled={saving || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)}
                 className="flex-1 py-3 bg-[#6b5ce7] text-white rounded-xl font-semibold hover:bg-[#5a4bd6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {saving ? (

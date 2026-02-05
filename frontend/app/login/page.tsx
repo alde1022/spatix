@@ -22,30 +22,24 @@ export default function LoginPage() {
   }
 
   const handleGoogleLogin = async () => {
-    console.log("Google login clicked")
     setError(null)
     setLoading(true)
     try {
-      console.log("Calling signInWithGoogle...")
       const result = await signInWithGoogle()
-      console.log("Got result:", result)
       await handleSuccess(result.user)
     } catch (err: any) {
-      console.error("Google login error:", err)
       setError(err.message || 'Google sign in failed')
       setLoading(false)
     }
   }
 
   const handleGithubLogin = async () => {
-    console.log("GitHub login clicked")
     setError(null)
     setLoading(true)
     try {
       const result = await signInWithGithub()
       await handleSuccess(result.user)
     } catch (err: any) {
-      console.error("GitHub login error:", err)
       setError(err.message || 'GitHub sign in failed')
       setLoading(false)
     }

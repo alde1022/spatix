@@ -435,8 +435,10 @@ async def create_map(
         # Collect email if provided (for anonymous save-gated flow)
         creator_email = None
         if body.email:
-            creator_email = body.email.strip().lower()
-            collect_email(creator_email, source="map_save")
+            cleaned = body.email.strip().lower()
+            if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', cleaned):
+                creator_email = cleaned
+                collect_email(creator_email, source="map_save")
 
         # Save to database (persistent storage)
         db_create_map(
@@ -716,14 +718,19 @@ async def get_map_stats(authorization: str = Header(...)):
 
 
 @router.get("/maps/by-email")
-async def list_maps_by_email(email: str, limit: int = 100, offset: int = 0):
+async def list_maps_by_email(request: Request, email: str, limit: int = 100, offset: int = 0):
     """List maps created by a given email address.
 
     Used by the frontend to show "My Maps" for anonymous users
-    who saved with their email.
+    who saved with their email. Rate-limited per IP.
     """
-    if not email or "@" not in email:
+    if not email or not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
         raise HTTPException(status_code=400, detail="Valid email required")
+
+    # Rate limit to prevent email enumeration
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     email = email.strip().lower()
     maps = get_maps_by_email(email, limit=limit, offset=offset)

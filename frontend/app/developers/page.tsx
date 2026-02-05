@@ -204,7 +204,7 @@ export default function DevelopersPage() {
       {/* Footer */}
       <footer className="border-t border-slate-200 py-8">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between text-sm text-slate-500">
-          <p>© 2025 Spatix. All rights reserved.</p>
+          <p>© 2026 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
             <Link href="/maps" className="hover:text-slate-700">Maps</Link>

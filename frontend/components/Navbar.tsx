@@ -92,7 +92,7 @@ export default function Navbar() {
                     onClick={() => setShowMenu(false)}
                     className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
-                    API Keys
+                    API Docs
                   </Link>
                   <hr className="my-2 border-slate-100" />
                   <button

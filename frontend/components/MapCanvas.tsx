@@ -190,7 +190,6 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
       }
     })
 
-    console.log("Data layers added successfully")
   }, [geojson, featureColor, fillOpacity, strokeWidth])
 
   // Fit map to data bounds
