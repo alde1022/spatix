@@ -49,6 +49,8 @@ interface Layer {
   opacity: number
   data: any
   type: "point" | "line" | "polygon"
+  vizType: "default" | "heatmap" | "3d"
+  height?: number  // for 3D extrusion
 }
 
 export default function MapsPage() {
@@ -110,15 +112,57 @@ export default function MapsPage() {
     const sourceId = `source-${layer.id}`
     const layerId = `layer-${layer.id}`
 
-    // Remove if exists
-    if (m.getLayer(layerId)) m.removeLayer(layerId)
-    if (m.getLayer(`${layerId}-outline`)) m.removeLayer(`${layerId}-outline`)
+    // Remove all possible layer variants
+    const layerVariants = [layerId, `${layerId}-outline`, `${layerId}-heatmap`, `${layerId}-3d`]
+    layerVariants.forEach(id => { if (m.getLayer(id)) m.removeLayer(id) })
     if (m.getSource(sourceId)) m.removeSource(sourceId)
 
     if (!layer.visible) return
 
     m.addSource(sourceId, { type: "geojson", data: layer.data })
 
+    // Heatmap visualization
+    if (layer.vizType === "heatmap" && layer.type === "point") {
+      m.addLayer({
+        id: `${layerId}-heatmap`,
+        type: "heatmap",
+        source: sourceId,
+        paint: {
+          "heatmap-weight": 1,
+          "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 9, 3],
+          "heatmap-color": [
+            "interpolate", ["linear"], ["heatmap-density"],
+            0, "rgba(0,0,0,0)",
+            0.2, layer.color + "33",
+            0.4, layer.color + "66",
+            0.6, layer.color + "99",
+            0.8, layer.color + "cc",
+            1, layer.color
+          ],
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20],
+          "heatmap-opacity": layer.opacity
+        }
+      })
+      return
+    }
+
+    // 3D Extrusion visualization
+    if (layer.vizType === "3d" && layer.type === "polygon") {
+      m.addLayer({
+        id: `${layerId}-3d`,
+        type: "fill-extrusion",
+        source: sourceId,
+        paint: {
+          "fill-extrusion-color": layer.color,
+          "fill-extrusion-height": layer.height || 1000,
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": layer.opacity * 0.8
+        }
+      })
+      return
+    }
+
+    // Default visualizations
     if (layer.type === "point") {
       m.addLayer({
         id: `${layerId}-outline`,
@@ -255,7 +299,9 @@ export default function MapsPage() {
         color: COLORS[(layers.length + i) % COLORS.length],
         opacity: 0.8,
         data: group.data,
-        type: group.type
+        type: group.type,
+        vizType: "default",
+        height: 1000
       }))
 
       setLayers(prev => [...prev, ...newLayers])
@@ -288,7 +334,9 @@ export default function MapsPage() {
         color: COLORS[(layers.length + i) % COLORS.length],
         opacity: 0.8,
         data: group.data,
-        type: group.type
+        type: group.type,
+        vizType: "default",
+        height: 1000
       }))
 
       setLayers(prev => [...prev, ...newLayers])
@@ -319,6 +367,20 @@ export default function MapsPage() {
   const updateLayerOpacity = (id: string, opacity: number) => {
     setLayers(prev => prev.map(l => 
       l.id === id ? { ...l, opacity } : l
+    ))
+  }
+
+  // Update layer viz type
+  const updateLayerVizType = (id: string, vizType: "default" | "heatmap" | "3d") => {
+    setLayers(prev => prev.map(l => 
+      l.id === id ? { ...l, vizType } : l
+    ))
+  }
+
+  // Update layer height (for 3D)
+  const updateLayerHeight = (id: string, height: number) => {
+    setLayers(prev => prev.map(l => 
+      l.id === id ? { ...l, height } : l
     ))
   }
 
@@ -447,6 +509,57 @@ export default function MapsPage() {
                         ))}
                       </div>
                     </div>
+
+                    {/* Visualization Type */}
+                    <div className="mb-3">
+                      <label className="block text-xs text-slate-500 mb-2">Visualization</label>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => updateLayerVizType(layer.id, "default")}
+                          className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                            layer.vizType === "default" ? "bg-brand-500 text-white" : "bg-slate-700 text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {layer.type === "point" ? "Point" : layer.type === "line" ? "Line" : "Fill"}
+                        </button>
+                        {layer.type === "point" && (
+                          <button
+                            onClick={() => updateLayerVizType(layer.id, "heatmap")}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                              layer.vizType === "heatmap" ? "bg-brand-500 text-white" : "bg-slate-700 text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            🔥 Heat
+                          </button>
+                        )}
+                        {layer.type === "polygon" && (
+                          <button
+                            onClick={() => updateLayerVizType(layer.id, "3d")}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                              layer.vizType === "3d" ? "bg-brand-500 text-white" : "bg-slate-700 text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            🏗️ 3D
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Height (for 3D) */}
+                    {layer.vizType === "3d" && (
+                      <div className="mb-3">
+                        <label className="block text-xs text-slate-500 mb-2">Height: {layer.height?.toLocaleString() || 1000}m</label>
+                        <input
+                          type="range"
+                          min="100"
+                          max="10000"
+                          step="100"
+                          value={layer.height || 1000}
+                          onChange={(e) => updateLayerHeight(layer.id, parseInt(e.target.value))}
+                          className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-500"
+                        />
+                      </div>
+                    )}
 
                     {/* Opacity */}
                     <div>
