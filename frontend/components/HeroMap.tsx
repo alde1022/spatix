@@ -21,22 +21,15 @@ export default function HeroMap() {
       center: [-122.42, 37.77],
       zoom: 12,
       attributionControl: false,
-      interactive: true,
-      scrollZoom: false,  // Disabled - use Ctrl+scroll or buttons
-      dragPan: true,
-      dragRotate: false,
-      touchZoomRotate: true,
-      cooperativeGestures: true,  // Shows "Use Ctrl + scroll to zoom"
     })
     
-    // Add zoom controls
+    m.scrollZoom.disable()
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
 
     m.on("load", () => {
       map.current = m
       
-      // SF Coffee shop data
-      const geojson = {
+      const geojson: GeoJSON.FeatureCollection = {
         type: "FeatureCollection",
         features: [
           { type: "Feature", properties: { name: "Blue Bottle", value: 45 }, geometry: { type: "Point", coordinates: [-122.4086, 37.7823] }},
@@ -54,39 +47,33 @@ export default function HeroMap() {
         ]
       }
 
-      m.addSource("coffee", { type: "geojson", data: geojson as any })
+      m.addSource("coffee", { type: "geojson", data: geojson })
 
-      // POINTS - colorful circles
+      // POINTS
       m.addLayer({
         id: "layer-points",
         type: "circle",
         source: "coffee",
         paint: {
-          "circle-radius": 10,
+          "circle-radius": 12,
           "circle-color": "#6366f1",
           "circle-stroke-width": 3,
-          "circle-stroke-color": "#ffffff",
-          "circle-opacity": 0.9
+          "circle-stroke-color": "#ffffff"
         }
       })
 
-      // BUBBLES - sized by value
+      // BUBBLES
       m.addLayer({
         id: "layer-bubbles",
         type: "circle",
         source: "coffee",
         layout: { visibility: "none" },
         paint: {
-          "circle-radius": ["*", ["get", "value"], 0.4],
-          "circle-color": [
-            "interpolate", ["linear"], ["get", "value"],
-            25, "#22c55e",
-            40, "#eab308", 
-            55, "#ef4444"
-          ],
+          "circle-radius": ["*", ["get", "value"], 0.5],
+          "circle-color": ["interpolate", ["linear"], ["get", "value"], 25, "#22c55e", 45, "#eab308", 60, "#ef4444"],
           "circle-stroke-width": 2,
           "circle-stroke-color": "#ffffff",
-          "circle-opacity": 0.75
+          "circle-opacity": 0.8
         }
       })
 
@@ -99,18 +86,8 @@ export default function HeroMap() {
         paint: {
           "heatmap-weight": ["interpolate", ["linear"], ["get", "value"], 20, 0, 60, 1],
           "heatmap-intensity": 1.5,
-          "heatmap-radius": 40,
-          "heatmap-color": [
-            "interpolate", ["linear"], ["heatmap-density"],
-            0, "rgba(0,0,0,0)",
-            0.1, "#312e81",
-            0.3, "#4f46e5",
-            0.5, "#818cf8",
-            0.7, "#c4b5fd",
-            0.9, "#fef08a",
-            1, "#fde047"
-          ],
-          "heatmap-opacity": 0.85
+          "heatmap-radius": 45,
+          "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)", 0.2, "#312e81", 0.4, "#4f46e5", 0.6, "#818cf8", 0.8, "#c4b5fd", 1, "#fde047"]
         }
       })
 
@@ -120,13 +97,11 @@ export default function HeroMap() {
     return () => { m.remove(); map.current = null }
   }, [])
 
-  // Switch visualization
   useEffect(() => {
     const m = map.current
     if (!m || !mapLoaded) return
-
-    const layers = ["layer-points", "layer-bubbles", "layer-heatmap"]
-    layers.forEach(id => {
+    
+    ["layer-points", "layer-bubbles", "layer-heatmap"].forEach(id => {
       if (m.getLayer(id)) {
         m.setLayoutProperty(id, "visibility", id === `layer-${vizType}` ? "visible" : "none")
       }
@@ -134,53 +109,30 @@ export default function HeroMap() {
   }, [vizType, mapLoaded])
 
   return (
-    <div className="w-full h-full relative bg-slate-200 rounded-b-xl overflow-hidden [&_.maplibregl-ctrl-bottom-right]:!bottom-3 [&_.maplibregl-ctrl-bottom-right]:!right-3">
+    <div className="w-full h-full relative bg-slate-100">
       <div ref={mapContainer} className="absolute inset-0" />
       
-      {/* Toggle buttons */}
+      {/* Toggle */}
       <div className="absolute top-3 left-3 flex gap-1 bg-white/95 backdrop-blur rounded-lg p-1 shadow-lg z-10">
-        {[
-          { id: "points" as VizType, label: "Points", icon: "⬤" },
-          { id: "bubbles" as VizType, label: "Bubbles", icon: "◉" },
-          { id: "heatmap" as VizType, label: "Heatmap", icon: "▦" },
-        ].map((opt) => (
+        {(["points", "bubbles", "heatmap"] as VizType[]).map((id) => (
           <button
-            key={opt.id}
-            onClick={() => setVizType(opt.id)}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
-              vizType === opt.id
-                ? "bg-indigo-600 text-white shadow"
-                : "text-slate-600 hover:bg-slate-100"
+            key={id}
+            onClick={() => setVizType(id)}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold capitalize ${
+              vizType === id ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <span>{opt.icon}</span>
-            {opt.label}
+            {id}
           </button>
         ))}
       </div>
 
-      {/* Data label */}
-      <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur rounded-lg px-3 py-1.5 shadow-lg z-10">
-        <div className="text-xs font-semibold text-slate-800">12 Coffee Shops</div>
-        <div className="text-[10px] text-slate-500">San Francisco, CA</div>
+      {/* Label */}
+      <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur rounded-lg px-3 py-1.5 shadow-lg z-10 text-xs">
+        <span className="font-semibold text-slate-800">12 Coffee Shops</span>
+        <span className="text-slate-400 ml-1">· SF</span>
       </div>
-
-      {/* Legend for bubbles */}
-      {vizType === "bubbles" && (
-        <div className="absolute top-3 right-3 bg-white/95 backdrop-blur rounded-lg px-3 py-2 shadow-lg z-10">
-          <div className="text-[10px] font-semibold text-slate-600 mb-1">Daily Visitors</div>
-          <div className="flex items-center gap-2 text-[10px]">
-            <span className="w-2 h-2 rounded-full bg-green-500"></span>
-            <span className="text-slate-500">Low</span>
-            <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
-            <span className="text-slate-500">Med</span>
-            <span className="w-2 h-2 rounded-full bg-red-500"></span>
-            <span className="text-slate-500">High</span>
-          </div>
-        </div>
-      )}
       
-      {/* Loading state */}
       {!mapLoaded && (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
           <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
