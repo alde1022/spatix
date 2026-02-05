@@ -4,9 +4,10 @@ Maps in seconds. No GIS skills needed.
 
 FastAPI backend for file processing and map storage.
 """
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Request
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import os
 import shutil
@@ -17,9 +18,33 @@ from zipfile import ZipFile
 import uuid
 import json
 import numpy as np
+import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import map routes
 from api.maps import router as maps_router
+from api.geocode import router as geocode_router
+from api.nlp_maps import router as nlp_maps_router
+
+# Environment configuration
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+# CORS configuration - restrict to specific origins in production
+ALLOWED_ORIGINS = [
+    FRONTEND_URL,
+    "https://spatix.io",
+    "https://www.spatix.io",
+]
+if ENVIRONMENT == "development":
+    ALLOWED_ORIGINS.extend([
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ])
 
 # Supported formats
 INPUT_FORMATS = {
@@ -37,8 +62,46 @@ INPUT_FORMATS = {
     '.fgb': 'FlatGeobuf',
 }
 
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+
+        # Security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # HSTS - only in production
+        if ENVIRONMENT == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self'; "
+            "connect-src 'self' https://api.maptiler.com https://*.tiles.mapbox.com; "
+            "frame-ancestors 'none';"
+        )
+
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database on startup
+    try:
+        from database import init_db
+        init_db()
+        logger.info("Database initialized on startup")
+    except Exception as e:
+        logger.error(f"Failed to initialize database on startup: {e}")
     yield
 
 app = FastAPI(
@@ -48,16 +111,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add security headers middleware first
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS - restricted to allowed origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 # Include map routes
 app.include_router(maps_router)
+app.include_router(geocode_router)
+app.include_router(nlp_maps_router)
 
 
 def sanitize_for_json(gdf):
@@ -79,26 +148,74 @@ def cleanup_later(background_tasks: BackgroundTasks, path: str):
                 shutil.rmtree(path)
             elif os.path.exists(path):
                 os.remove(path)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp path {path}: {e}")
     background_tasks.add_task(cleanup)
+
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal attacks."""
+    # Remove any path components
+    filename = os.path.basename(filename)
+    # Remove null bytes and other dangerous characters
+    filename = filename.replace('\x00', '')
+    # Only allow alphanumeric, dots, underscores, and hyphens
+    filename = re.sub(r'[^\w\.\-]', '_', filename)
+    # Prevent hidden files
+    if filename.startswith('.'):
+        filename = '_' + filename[1:]
+    # Ensure we have a filename
+    if not filename:
+        filename = "uploaded_file"
+    return filename
+
+
+def safe_extract_zip(zip_file: ZipFile, extract_dir: str) -> None:
+    """Safely extract zip file, preventing zip slip attacks."""
+    extract_dir = os.path.realpath(extract_dir)
+
+    for member in zip_file.namelist():
+        # Get the target path
+        member_path = os.path.realpath(os.path.join(extract_dir, member))
+
+        # Check for path traversal (zip slip attack)
+        if not member_path.startswith(extract_dir + os.sep) and member_path != extract_dir:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid zip file: contains files with unsafe paths"
+            )
+
+        # Check for dangerous filenames
+        basename = os.path.basename(member)
+        if basename.startswith('.') or '\x00' in member:
+            continue  # Skip hidden and null-byte files
+
+    # Safe to extract
+    zip_file.extractall(extract_dir)
 
 
 def save_upload(upload_file: UploadFile, temp_dir: str) -> str:
     """Save uploaded file and extract if zip/kmz."""
-    file_path = os.path.join(temp_dir, upload_file.filename)
+    # Sanitize filename to prevent path traversal
+    safe_filename = sanitize_filename(upload_file.filename or "upload")
+    file_path = os.path.join(temp_dir, safe_filename)
+
+    # Verify the path is within temp_dir
+    if not os.path.realpath(file_path).startswith(os.path.realpath(temp_dir)):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(upload_file.file, buffer)
-    
-    filename_lower = upload_file.filename.lower()
-    
+
+    filename_lower = safe_filename.lower()
+
     # Handle zip files
     if filename_lower.endswith('.zip'):
         extract_dir = os.path.join(temp_dir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
         with ZipFile(file_path, 'r') as z:
-            z.extractall(extract_dir)
-        
+            safe_extract_zip(z, extract_dir)
+
         for root, dirs, files in os.walk(extract_dir):
             for f in files:
                 fl = f.lower()
@@ -108,22 +225,22 @@ def save_upload(upload_file: UploadFile, temp_dir: str) -> str:
                     return os.path.join(root, f)
                 if fl.endswith('.geojson') or fl.endswith('.json'):
                     return os.path.join(root, f)
-        
+
         raise HTTPException(status_code=400, detail="No supported data file found in zip")
-    
+
     # Handle KMZ
     if filename_lower.endswith('.kmz'):
         extract_dir = os.path.join(temp_dir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
         with ZipFile(file_path, 'r') as z:
-            z.extractall(extract_dir)
-        
+            safe_extract_zip(z, extract_dir)
+
         for root, dirs, files in os.walk(extract_dir):
             for f in files:
                 if f.lower().endswith('.kml'):
                     return os.path.join(root, f)
         raise HTTPException(status_code=400, detail="No KML file found in KMZ")
-    
+
     return file_path
 
 
@@ -223,14 +340,16 @@ async def analyze(
                 preview_gdf = sanitize_for_json(preview_gdf)
                 result["preview_geojson"] = json.loads(preview_gdf.to_json())
             except Exception as e:
-                print(f"Preview generation failed: {e}")
+                logger.warning(f"Preview generation failed: {e}")
                 result["preview_geojson"] = None
         
         return JSONResponse(content=result)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not read file: {str(e)}")
+        # Log the full error for debugging, but return a generic message to users
+        logger.error(f"File analysis error: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Could not read file. Please check the file format is supported.")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -239,9 +358,9 @@ async def analyze(
 try:
     from routers.auth import router as auth_router
     app.include_router(auth_router)
-    print("✅ Auth router loaded")
+    logger.info("Auth router loaded successfully")
 except Exception as e:
-    print(f"❌ Auth router failed: {e}")
+    logger.error(f"Auth router failed to load: {e}")
 
 if __name__ == "__main__":
     import uvicorn

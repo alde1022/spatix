@@ -11,18 +11,29 @@ function CallbackContent() {
   const error = searchParams.get('error')
 
   useEffect(() => {
-    if (token) {
-      // Store token
-      localStorage.setItem('spatix_token', token)
-      
+    // OAuth callback - auth cookie is set by the server
+    // We just need to handle the redirect
+    if (!error) {
+      // For backwards compatibility, also store token if provided in URL
+      // (will be removed in future versions)
+      if (token) {
+        localStorage.setItem('spatix_token', token)
+      }
+
       // Get redirect URL or default to /account
-      const redirect = localStorage.getItem('spatix_redirect') || '/account'
+      // Validate redirect URL to prevent open redirect
+      let redirect = localStorage.getItem('spatix_redirect') || '/account'
       localStorage.removeItem('spatix_redirect')
-      
+
+      // Only allow relative URLs starting with /
+      if (!redirect.startsWith('/') || redirect.startsWith('//')) {
+        redirect = '/account'
+      }
+
       // Redirect
       router.push(redirect)
     }
-  }, [token, router])
+  }, [token, error, router])
 
   if (error) {
     return (

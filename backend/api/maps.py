@@ -6,24 +6,42 @@ POST /api/map - Dead simple map creation from data
 GET /api/map/{id} - Retrieve map data
 DELETE /api/map/{id} - Delete a map
 """
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Header
 from pydantic import BaseModel, model_validator, Field
 from typing import Optional, List, Union, Dict, Any, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 import secrets
 import json
 import re
 import hashlib
+import logging
+
+# Database imports for persistent storage
+from database import (
+    create_map as db_create_map,
+    get_map as db_get_map,
+    map_exists as db_map_exists,
+    increment_map_views,
+    delete_map as db_delete_map,
+    update_map as db_update_map,
+    get_user_maps,
+    get_user_map_count,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["maps"])
 
-# In-memory storage (replace with database in production)
-_maps_storage: Dict[str, dict] = {}
-
-# Rate limiting
+# Rate limiting (in-memory - acceptable for rate limits)
 _ip_requests: Dict[str, List[datetime]] = {}
+_user_requests: Dict[int, List[datetime]] = {}
 RATE_LIMIT_WINDOW = 3600  # 1 hour
-RATE_LIMIT_MAX = 60  # 60 maps per hour for free tier
+RATE_LIMIT_MAX_ANONYMOUS = 10  # 10 maps per hour for anonymous users
+RATE_LIMIT_MAX_FREE = 60  # 60 maps per hour for free tier
+RATE_LIMIT_MAX_PRO = 500  # 500 maps per hour for pro tier
+
+# Maximum retries for ID collision
+MAX_ID_COLLISION_RETRIES = 5
 
 
 # ==================== MODELS ====================
@@ -86,22 +104,36 @@ class MapResponse(BaseModel):
 
 # ==================== UTILITIES ====================
 
-def check_rate_limit(ip: str) -> bool:
-    """Simple IP-based rate limiting."""
-    now = datetime.utcnow()
-    
-    if ip in _ip_requests:
-        _ip_requests[ip] = [
-            t for t in _ip_requests[ip]
+def check_rate_limit(ip: str, user_id: int = None, user_plan: str = None) -> bool:
+    """Rate limiting - more generous for authenticated users."""
+    now = datetime.now(timezone.utc)
+
+    # Determine rate limit based on user status
+    if user_id and user_plan == "pro":
+        rate_limit = RATE_LIMIT_MAX_PRO
+        key = f"user_{user_id}"
+        requests_dict = _user_requests
+    elif user_id:
+        rate_limit = RATE_LIMIT_MAX_FREE
+        key = f"user_{user_id}"
+        requests_dict = _user_requests
+    else:
+        rate_limit = RATE_LIMIT_MAX_ANONYMOUS
+        key = ip
+        requests_dict = _ip_requests
+
+    if key in requests_dict:
+        requests_dict[key] = [
+            t for t in requests_dict[key]
             if (now - t).total_seconds() < RATE_LIMIT_WINDOW
         ]
     else:
-        _ip_requests[ip] = []
-    
-    if len(_ip_requests[ip]) >= RATE_LIMIT_MAX:
+        requests_dict[key] = []
+
+    if len(requests_dict[key]) >= rate_limit:
         return False
-    
-    _ip_requests[ip].append(now)
+
+    requests_dict[key].append(now)
     return True
 
 
@@ -301,45 +333,88 @@ def auto_style(geojson: Dict) -> Dict[str, Any]:
 
 
 def generate_map_id() -> str:
-    """Generate a short unique map ID."""
-    return secrets.token_urlsafe(6)
+    """Generate a short unique map ID with collision checking."""
+    for _ in range(MAX_ID_COLLISION_RETRIES):
+        # Use 9 bytes (12 chars) for more entropy to reduce collision risk
+        map_id = secrets.token_urlsafe(9)
+        if not db_map_exists(map_id):
+            return map_id
+    # If we hit max retries, use a longer ID
+    return secrets.token_urlsafe(16)
+
+
+def generate_delete_token() -> str:
+    """Generate a secure delete token for map ownership."""
+    return secrets.token_urlsafe(32)
 
 
 # ==================== ENDPOINTS ====================
 
-@router.post("/map", response_model=MapResponse)
-async def create_map(request: Request, body: MapRequest):
+class MapCreateResponse(BaseModel):
+    """Response from map creation including delete token."""
+    success: bool
+    id: str
+    url: str
+    embed: str
+    preview_url: Optional[str] = None
+    delete_token: str  # Token required for deleting the map
+
+
+@router.post("/map", response_model=MapCreateResponse)
+async def create_map(
+    request: Request,
+    body: MapRequest,
+    authorization: Optional[str] = Header(None)
+):
     """
     Create a map from data - the simplest way for AI to make maps.
-    
+
     Accepts:
     - GeoJSON (FeatureCollection, Feature, or raw Geometry)
     - Coordinate arrays: [[lng, lat], ...] or [lng, lat]
     - WKT strings: "POINT(-122 37)", "POLYGON(...)"
-    
-    Returns instant shareable URL.
+
+    Returns instant shareable URL and a delete_token for managing the map.
+    Authenticated users get their maps saved to their account.
     """
     client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(client_ip):
+
+    # Try to get user from auth token (optional - maps can be created anonymously)
+    user_id = None
+    user_plan = None
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from routers.auth import verify_token
+            token = authorization.split(" ")[1]
+            payload = verify_token(token)
+            user_id = payload.get("user_id")
+            user_plan = payload.get("plan", "free")
+        except Exception:
+            pass  # Anonymous creation is fine
+
+    # Rate limit check
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
         raise HTTPException(
             status_code=429,
             detail={
                 "error": "RATE_LIMIT_EXCEEDED",
-                "message": f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.",
+                "message": f"Rate limit exceeded. Max {rate_limit} maps per hour." +
+                          (" Sign in for higher limits." if not user_id else ""),
                 "retry_after": 3600
             }
         )
-    
+
     try:
         geojson = detect_and_normalize_data(body.get_data())
-        
+
         bounds = body.bounds
         if bounds == "auto" or bounds is None:
             bounds = calculate_bounds(geojson, body.markers)
-        
+
         map_id = generate_map_id()
-        now = datetime.utcnow().isoformat()
-        
+        delete_token = generate_delete_token()
+
         map_config = {
             "geojson": geojson,
             "style": auto_style(geojson),
@@ -349,67 +424,111 @@ async def create_map(request: Request, body: MapRequest):
             "zoom": body.zoom,
             "markers": [m.model_dump() for m in body.markers] if body.markers else [],
         }
-        
-        _maps_storage[map_id] = {
-            "id": map_id,
-            "title": body.title or "Untitled Map",
-            "description": body.description or "",
-            "config": map_config,
-            "created_at": now,
-            "created_by_ip": hashlib.sha256(client_ip.encode()).hexdigest()[:16],
-            "views": 0,
-            "public": True
-        }
-        
+
+        # Hash the delete token for storage (don't store the raw token)
+        delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
+
+        # Save to database (persistent storage)
+        db_create_map(
+            map_id=map_id,
+            title=body.title or "Untitled Map",
+            description=body.description or "",
+            config=map_config,
+            delete_token_hash=delete_token_hash,
+            user_id=user_id,  # Links to user account if authenticated
+            public=True
+        )
+
         base_url = "https://spatix.io"
         map_url = f"{base_url}/m/{map_id}"
-        
-        return MapResponse(
+
+        return MapCreateResponse(
             success=True,
             id=map_id,
             url=map_url,
             embed=f'<iframe src="{map_url}?embed=1" width="600" height="400" frameborder="0"></iframe>',
-            preview_url=f"{base_url}/api/map/{map_id}/preview.png"
+            preview_url=f"{base_url}/api/map/{map_id}/preview.png",
+            delete_token=delete_token  # Return token to client for deletion
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to create map: {str(e)}")
+        logger.error(f"Failed to create map: {e}")
+        raise HTTPException(status_code=400, detail="Failed to create map. Please check your data format.")
 
 
 @router.get("/map/{map_id}")
 async def get_map(map_id: str):
     """Get map data by ID."""
-    if map_id not in _maps_storage:
+    map_data = db_get_map(map_id)
+    if not map_data:
         raise HTTPException(status_code=404, detail="Map not found")
-    
-    map_data = _maps_storage[map_id]
-    map_data["views"] += 1
-    
+
+    # Increment views asynchronously
+    increment_map_views(map_id)
+
     return {
         "id": map_data["id"],
         "title": map_data["title"],
         "description": map_data["description"],
         "config": map_data["config"],
         "created_at": map_data["created_at"],
-        "views": map_data["views"]
+        "views": map_data["views"] + 1  # Include current view
     }
 
 
 @router.delete("/map/{map_id}")
-async def delete_map(map_id: str, request: Request):
-    """Delete a map (only by original creator IP)."""
-    if map_id not in _maps_storage:
+async def delete_map(
+    map_id: str,
+    x_delete_token: Optional[str] = Header(None, alias="X-Delete-Token"),
+    delete_token: Optional[str] = None,  # Also accept as query param for convenience
+    authorization: Optional[str] = Header(None)
+):
+    """Delete a map using the delete token provided at creation.
+
+    Pass the delete_token either as:
+    - X-Delete-Token header (recommended)
+    - delete_token query parameter
+
+    Authenticated users can also delete their own maps without a token.
+    """
+    map_data = db_get_map(map_id)
+    if not map_data:
         raise HTTPException(status_code=404, detail="Map not found")
-    
-    client_ip = request.client.host if request.client else "unknown"
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
-    
-    if _maps_storage[map_id]["created_by_ip"] != ip_hash:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this map")
-    
-    del _maps_storage[map_id]
+
+    # Check if user owns the map (authenticated deletion)
+    user_id = None
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from routers.auth import verify_token
+            token = authorization.split(" ")[1]
+            payload = verify_token(token)
+            user_id = payload.get("user_id")
+        except Exception:
+            pass
+
+    # Allow deletion if user owns the map
+    if user_id and map_data.get("user_id") == user_id:
+        db_delete_map(map_id)
+        return {"success": True, "message": "Map deleted"}
+
+    # Otherwise require delete token
+    token = x_delete_token or delete_token
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Delete token required. Provide X-Delete-Token header or delete_token query parameter."
+        )
+
+    # Verify the token
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    stored_hash = map_data.get("delete_token_hash")
+
+    if not stored_hash or token_hash != stored_hash:
+        raise HTTPException(status_code=403, detail="Invalid delete token")
+
+    db_delete_map(map_id)
     return {"success": True, "message": "Map deleted"}
 
 
@@ -453,4 +572,131 @@ async def get_schema():
             },
             "required": ["data"]
         }
+    }
+
+
+# ==================== USER MAP MANAGEMENT ====================
+
+class MapUpdateRequest(BaseModel):
+    """Request body for updating a map."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    public: Optional[bool] = None
+
+
+class UserMapListItem(BaseModel):
+    """Summary of a map for list views."""
+    id: str
+    title: str
+    description: Optional[str]
+    views: int
+    public: bool
+    created_at: str
+    updated_at: str
+    url: str
+
+
+class UserMapsResponse(BaseModel):
+    """Response for user's maps list."""
+    maps: List[UserMapListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+def require_auth(authorization: Optional[str]) -> dict:
+    """Require authentication and return user payload."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        from routers.auth import verify_token
+        token = authorization.split(" ")[1]
+        return verify_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+@router.get("/maps/me", response_model=UserMapsResponse)
+async def list_my_maps(
+    authorization: str = Header(...),
+    limit: int = 50,
+    offset: int = 0
+):
+    """List all maps owned by the authenticated user."""
+    payload = require_auth(authorization)
+    user_id = payload.get("user_id")
+
+    maps = get_user_maps(user_id, limit=limit, offset=offset)
+    total = get_user_map_count(user_id)
+
+    base_url = "https://spatix.io"
+    map_items = [
+        UserMapListItem(
+            id=m["id"],
+            title=m["title"],
+            description=m.get("description"),
+            views=m["views"],
+            public=bool(m["public"]),
+            created_at=str(m["created_at"]),
+            updated_at=str(m["updated_at"]),
+            url=f"{base_url}/m/{m['id']}"
+        )
+        for m in maps
+    ]
+
+    return UserMapsResponse(
+        maps=map_items,
+        total=total,
+        limit=limit,
+        offset=offset
+    )
+
+
+@router.put("/map/{map_id}")
+async def update_map(
+    map_id: str,
+    body: MapUpdateRequest,
+    authorization: str = Header(...)
+):
+    """Update a map's metadata. Only the owner can update."""
+    payload = require_auth(authorization)
+    user_id = payload.get("user_id")
+
+    map_data = db_get_map(map_id)
+    if not map_data:
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    # Only owner can update
+    if map_data.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this map")
+
+    # Update the map
+    db_update_map(
+        map_id=map_id,
+        title=body.title,
+        description=body.description,
+        public=body.public
+    )
+
+    return {"success": True, "message": "Map updated"}
+
+
+@router.get("/maps/stats")
+async def get_map_stats(authorization: str = Header(...)):
+    """Get statistics about user's maps."""
+    payload = require_auth(authorization)
+    user_id = payload.get("user_id")
+
+    total_maps = get_user_map_count(user_id)
+    maps = get_user_maps(user_id, limit=1000)  # Get all for stats
+
+    total_views = sum(m.get("views", 0) for m in maps)
+    public_maps = sum(1 for m in maps if m.get("public"))
+
+    return {
+        "total_maps": total_maps,
+        "total_views": total_views,
+        "public_maps": public_maps,
+        "private_maps": total_maps - public_maps
     }
