@@ -118,7 +118,7 @@ export default function AccountPage() {
                 </div>
                 {currentPlan.name === 'Free' && (
                   <Link
-                    href="/pricing"
+                    href="/maps"
                     className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
                   >
                     Upgrade
@@ -228,7 +228,7 @@ export default function AccountPage() {
                 </div>
               </Link>
               <Link
-                href="/pricing"
+                href="/maps"
                 className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors"
               >
                 <span className="text-2xl">💳</span>

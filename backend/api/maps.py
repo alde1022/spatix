@@ -26,6 +26,8 @@ from database import (
     update_map as db_update_map,
     get_user_maps,
     get_user_map_count,
+    collect_email,
+    get_maps_by_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,8 @@ class MapRequest(BaseModel):
     bounds: Optional[Union[Literal["auto"], List[List[float]]]] = "auto"
     center: Optional[List[float]] = None
     zoom: Optional[int] = None
+    # Email for save-gated flow (anonymous users)
+    email: Optional[str] = None
     
     model_config = {"extra": "allow"}
     
@@ -428,6 +432,12 @@ async def create_map(
         # Hash the delete token for storage (don't store the raw token)
         delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
+        # Collect email if provided (for anonymous save-gated flow)
+        creator_email = None
+        if body.email:
+            creator_email = body.email.strip().lower()
+            collect_email(creator_email, source="map_save")
+
         # Save to database (persistent storage)
         db_create_map(
             map_id=map_id,
@@ -436,7 +446,8 @@ async def create_map(
             config=map_config,
             delete_token_hash=delete_token_hash,
             user_id=user_id,  # Links to user account if authenticated
-            public=True
+            public=True,
+            creator_email=creator_email,
         )
 
         base_url = "https://spatix.io"
@@ -702,3 +713,34 @@ async def get_map_stats(authorization: str = Header(...)):
         "public_maps": public_maps,
         "private_maps": total_maps - public_maps
     }
+
+
+@router.get("/maps/by-email")
+async def list_maps_by_email(email: str, limit: int = 100, offset: int = 0):
+    """List maps created by a given email address.
+
+    Used by the frontend to show "My Maps" for anonymous users
+    who saved with their email.
+    """
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+
+    email = email.strip().lower()
+    maps = get_maps_by_email(email, limit=limit, offset=offset)
+
+    base_url = "https://spatix.io"
+    map_items = [
+        {
+            "id": m["id"],
+            "title": m["title"],
+            "description": m.get("description"),
+            "views": m["views"],
+            "public": bool(m["public"]),
+            "created_at": str(m["created_at"]),
+            "updated_at": str(m["updated_at"]),
+            "url": f"{base_url}/m/{m['id']}"
+        }
+        for m in maps
+    ]
+
+    return {"maps": map_items, "total": len(map_items)}

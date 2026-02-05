@@ -572,7 +572,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-8 text-sm text-slate-500">
               <Link href="/developers" className="hover:text-slate-700">API</Link>
-              <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
+              <Link href="/maps" className="hover:text-slate-700">Maps</Link>
               <Link href="/login" className="hover:text-slate-700">Log in</Link>
             </div>
             <p className="text-sm text-slate-400">© 2026 Spatix</p>

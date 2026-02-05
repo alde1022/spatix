@@ -22,8 +22,8 @@ export default function DevelopersPage() {
             <a href="#quickstart" className="px-6 py-3 bg-brand-600 rounded-lg hover:bg-brand-700 transition-colors font-medium">
               Quick Start
             </a>
-            <Link href="/pricing" className="px-6 py-3 border border-slate-500 rounded-lg hover:border-white transition-colors font-medium">
-              Get API Key
+            <Link href="/maps" className="px-6 py-3 border border-slate-500 rounded-lg hover:border-white transition-colors font-medium">
+              Try It Free
             </Link>
           </div>
         </div>
@@ -207,7 +207,7 @@ export default function DevelopersPage() {
           <p>© 2025 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
-            <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
+            <Link href="/maps" className="hover:text-slate-700">Maps</Link>
             <a href="https://twitter.com/spatixmaps" className="hover:text-slate-700">Twitter</a>
           </div>
         </div>

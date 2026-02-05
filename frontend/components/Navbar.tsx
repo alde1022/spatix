@@ -45,17 +45,11 @@ export default function Navbar() {
         >
           Maps
         </Link>
-        <Link 
-          href="/developers" 
+        <Link
+          href="/developers"
           className={`text-sm font-medium transition-colors ${isActive('/developers') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
         >
           Developers
-        </Link>
-        <Link 
-          href="/pricing" 
-          className={`text-sm font-medium transition-colors ${isActive('/pricing') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
-        >
-          Pricing
         </Link>
         
         {user ? (
@@ -78,7 +72,6 @@ export default function Navbar() {
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50">
                   <div className="px-4 py-2 border-b border-slate-100">
                     <p className="text-sm font-medium text-slate-900 truncate">{user.email}</p>
-                    <p className="text-xs text-slate-500">Free plan</p>
                   </div>
                   <Link
                     href="/account"

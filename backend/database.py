@@ -122,6 +122,20 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_maps_workspace ON maps(workspace_id);
                     CREATE INDEX IF NOT EXISTS idx_maps_public ON maps(public);
                     CREATE INDEX IF NOT EXISTS idx_maps_created ON maps(created_at DESC);
+
+                    -- Collected emails from save-gated flow
+                    CREATE TABLE IF NOT EXISTS collected_emails (
+                        id SERIAL PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        source VARCHAR(50) DEFAULT 'map_save',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_collected_emails_email ON collected_emails(email);
+
+                    -- Link maps to emails for anonymous users
+                    ALTER TABLE maps ADD COLUMN IF NOT EXISTS creator_email TEXT;
+                    CREATE INDEX IF NOT EXISTS idx_maps_creator_email ON maps(creator_email);
                 """)
             conn.commit()
     else:
@@ -193,7 +207,26 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_maps_workspace ON maps(workspace_id);
                 CREATE INDEX IF NOT EXISTS idx_maps_public ON maps(public);
                 CREATE INDEX IF NOT EXISTS idx_maps_created ON maps(created_at);
+
+                -- Collected emails from save-gated flow
+                CREATE TABLE IF NOT EXISTS collected_emails (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    source TEXT DEFAULT 'map_save',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_collected_emails_email ON collected_emails(email);
             """)
+            # SQLite doesn't support ADD COLUMN IF NOT EXISTS, so try/ignore
+            try:
+                conn.execute("ALTER TABLE maps ADD COLUMN creator_email TEXT")
+            except Exception:
+                pass  # Column already exists
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_maps_creator_email ON maps(creator_email)")
+            except Exception:
+                pass
 
     _db_initialized = True
     logger.info("Database initialized successfully")
@@ -218,7 +251,7 @@ def ensure_db_initialized():
 
 def create_map(map_id: str, title: str, description: str, config: dict,
                delete_token_hash: str, user_id: int = None, workspace_id: int = None,
-               public: bool = True) -> bool:
+               public: bool = True, creator_email: str = None) -> bool:
     """Create a new map in the database."""
     ensure_db_initialized()
 
@@ -229,17 +262,17 @@ def create_map(map_id: str, title: str, description: str, config: dict,
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO maps (id, user_id, workspace_id, title, description,
-                                     config, delete_token_hash, public)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                     config, delete_token_hash, public, creator_email)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (map_id, user_id, workspace_id, title, description,
-                      config_str, delete_token_hash, public))
+                      config_str, delete_token_hash, public, creator_email))
         else:
             conn.execute("""
                 INSERT INTO maps (id, user_id, workspace_id, title, description,
-                                 config, delete_token_hash, public)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                 config, delete_token_hash, public, creator_email)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (map_id, user_id, workspace_id, title, description,
-                  config_str, delete_token_hash, 1 if public else 0))
+                  config_str, delete_token_hash, 1 if public else 0, creator_email))
     return True
 
 
@@ -436,3 +469,60 @@ def get_user_workspaces(user_id: int) -> list:
 def create_default_workspace(user_id: int) -> int:
     """Create a default workspace for a new user."""
     return create_workspace(user_id, "My Maps", "Default workspace", is_default=True)
+
+
+# ==================== EMAIL COLLECTION ====================
+
+def collect_email(email: str, source: str = "map_save") -> bool:
+    """Save a collected email (idempotent - stores each unique email once per source)."""
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM collected_emails WHERE email = %s AND source = %s",
+                    (email, source)
+                )
+                if not cur.fetchone():
+                    cur.execute(
+                        "INSERT INTO collected_emails (email, source) VALUES (%s, %s)",
+                        (email, source)
+                    )
+        else:
+            cur = conn.execute(
+                "SELECT 1 FROM collected_emails WHERE email = ? AND source = ?",
+                (email, source)
+            )
+            if not cur.fetchone():
+                conn.execute(
+                    "INSERT INTO collected_emails (email, source) VALUES (?, ?)",
+                    (email, source)
+                )
+    return True
+
+
+def get_maps_by_email(email: str, limit: int = 100, offset: int = 0) -> list:
+    """Get all maps created by a given email address."""
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, title, description, views, public, created_at, updated_at
+                    FROM maps WHERE creator_email = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                """, (email, limit, offset))
+                rows = cur.fetchall()
+        else:
+            cur = conn.execute("""
+                SELECT id, title, description, views, public, created_at, updated_at
+                FROM maps WHERE creator_email = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (email, limit, offset))
+            rows = cur.fetchall()
+
+    return [dict(row) for row in rows]
