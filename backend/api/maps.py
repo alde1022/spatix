@@ -384,10 +384,10 @@ async def create_map(
     user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
-            from routers.auth import verify_token
+            from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
-            payload = verify_token(token)
-            user_id = payload.get("user_id")
+            payload = verify_jwt(token)
+            user_id = payload.get("sub")
             user_plan = payload.get("plan", "free")
         except Exception:
             pass  # Anonymous creation is fine
@@ -501,10 +501,10 @@ async def delete_map(
     user_id = None
     if authorization and authorization.startswith("Bearer "):
         try:
-            from routers.auth import verify_token
+            from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
-            payload = verify_token(token)
-            user_id = payload.get("user_id")
+            payload = verify_jwt(token)
+            user_id = payload.get("sub")
         except Exception:
             pass
 
@@ -609,12 +609,14 @@ def require_auth(authorization: Optional[str]) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    try:
-        from routers.auth import verify_token
-        token = authorization.split(" ")[1]
-        return verify_token(token)
-    except Exception:
+    from routers.auth import verify_jwt
+    token = authorization.split(" ")[1]
+    payload = verify_jwt(token)
+    
+    if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    return payload
 
 
 @router.get("/maps/me", response_model=UserMapsResponse)
@@ -625,7 +627,7 @@ async def list_my_maps(
 ):
     """List all maps owned by the authenticated user."""
     payload = require_auth(authorization)
-    user_id = payload.get("user_id")
+    user_id = payload.get("sub")
 
     maps = get_user_maps(user_id, limit=limit, offset=offset)
     total = get_user_map_count(user_id)
@@ -661,7 +663,7 @@ async def update_map(
 ):
     """Update a map's metadata. Only the owner can update."""
     payload = require_auth(authorization)
-    user_id = payload.get("user_id")
+    user_id = payload.get("sub")
 
     map_data = db_get_map(map_id)
     if not map_data:
@@ -686,7 +688,7 @@ async def update_map(
 async def get_map_stats(authorization: str = Header(...)):
     """Get statistics about user's maps."""
     payload = require_auth(authorization)
-    user_id = payload.get("user_id")
+    user_id = payload.get("sub")
 
     total_maps = get_user_map_count(user_id)
     maps = get_user_maps(user_id, limit=1000)  # Get all for stats
