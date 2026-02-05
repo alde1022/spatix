@@ -78,10 +78,10 @@ Andytown Coffee,37.7559,-122.5070,4.7`,
     thumbnail: "🏫",
     color: "bg-blue-100",
     fileType: "Shapefile",
-    sampleFile: \`SHAPEFILE: school_districts.zip
+    sampleFile: `SHAPEFILE: school_districts.zip
 Contains: .shp .shx .dbf .prj
 Fields: NAME, SCHOOLS, AREA_SQMI
-CRS: EPSG:4326 (WGS84)\`,
+CRS: EPSG:4326 (WGS84)`,
     geojson: {
       type: "FeatureCollection",
       features: [
@@ -647,4 +647,3 @@ export default function Home() {
     </div>
   )
 }
-// Force rebuild Thu Feb  5 19:55:07 UTC 2026
