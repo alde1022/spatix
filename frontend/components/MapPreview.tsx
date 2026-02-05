@@ -176,8 +176,8 @@ export default function MapPreview({
   }, [])
 
   return (
-    <div className={`relative overflow-hidden ${className}`}>
-      <div ref={mapContainer} className="absolute inset-0" />
+    <div className={`relative overflow-hidden bg-slate-100 ${className}`} style={{ minHeight: '250px' }}>
+      <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
       {!loaded && (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
           <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />

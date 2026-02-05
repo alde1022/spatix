@@ -362,7 +362,7 @@ export default function Home() {
                 </div>
                 {/* Live interactive map preview */}
                 <MapPreview 
-                  className="aspect-[4/3]" 
+                  className="aspect-[4/3] min-h-[300px]" 
                   style="light"
                   color="#6366f1"
                   interactive={true}
