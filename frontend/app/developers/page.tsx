@@ -1,25 +1,12 @@
 "use client"
 
 import Link from "next/link"
+import Navbar from "@/components/Navbar"
 
 export default function DevelopersPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      {/* Top Nav */}
-      <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
-            <span className="text-white text-xl">🗺️</span>
-          </div>
-          <span className="font-bold text-xl text-slate-900">Spatix</span>
-        </Link>
-        <div className="flex items-center gap-6">
-          <Link href="/developers" className="text-brand-600 text-sm font-medium">Developers</Link>
-          <Link href="/pricing" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Pricing</Link>
-          <button className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">Sign In</button>
-        </div>
-      </nav>
-
+      <Navbar />
       {/* Hero */}
       <header className="bg-slate-900 text-white py-16">
         <div className="max-w-4xl mx-auto px-4 text-center">

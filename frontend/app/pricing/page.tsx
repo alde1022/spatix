@@ -1,4 +1,7 @@
+'use client'
+
 import Link from "next/link"
+import Navbar from "@/components/Navbar"
 import { Check } from "lucide-react"
 
 const plans = [
@@ -8,45 +11,53 @@ const plans = [
     period: "forever",
     description: "Perfect for trying out Spatix",
     features: [
-      "5 maps per month",
+      "10 maps per month",
       "Basic styling options",
+      "100 API calls/month",
+      "50 MB storage",
       "Public sharing",
       "Community support",
     ],
     cta: "Get Started",
+    href: "/signup",
     highlighted: false,
   },
   {
     name: "Pro",
-    price: "$9",
+    price: "$19",
     period: "/month",
     description: "For creators who need more",
     features: [
-      "Unlimited maps",
+      "500 maps per month",
       "All styling options",
+      "10,000 API calls/month",
+      "5 GB storage",
       "Custom domains",
       "Remove Spatix branding",
-      "API access (500 calls/mo)",
       "Priority support",
     ],
     cta: "Start Free Trial",
+    href: "/signup?plan=pro",
     highlighted: true,
   },
   {
     name: "Team",
-    price: "$29",
+    price: "$49",
     period: "/month",
     description: "For teams and organizations",
     features: [
+      "Unlimited maps",
       "Everything in Pro",
+      "100,000 API calls/month",
+      "50 GB storage",
       "5 team members",
       "Team workspaces",
       "Analytics dashboard",
-      "API access (5,000 calls/mo)",
       "SSO integration",
       "Dedicated support",
     ],
     cta: "Contact Sales",
+    href: "mailto:team@spatix.io",
     highlighted: false,
   },
 ]
@@ -54,26 +65,7 @@ const plans = [
 export default function PricingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      {/* Navigation */}
-      <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
-            <span className="text-white text-xl">🗺️</span>
-          </div>
-          <span className="font-bold text-xl text-slate-900">Spatix</span>
-        </Link>
-        <div className="flex items-center gap-6">
-          <Link href="/developers" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
-            Developers
-          </Link>
-          <Link href="/pricing" className="text-brand-600 text-sm font-medium">
-            Pricing
-          </Link>
-          <button className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">
-            Sign In
-          </button>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Header */}
       <div className="text-center py-16 px-6">
@@ -119,15 +111,16 @@ export default function PricingPage() {
                   </li>
                 ))}
               </ul>
-              <button
-                className={`w-full py-3 rounded-lg font-medium transition-colors ${
+              <Link
+                href={plan.href}
+                className={`block w-full py-3 rounded-lg font-medium transition-colors text-center ${
                   plan.highlighted
                     ? "bg-brand-500 text-white hover:bg-brand-600"
                     : "bg-slate-100 text-slate-900 hover:bg-slate-200"
                 }`}
               >
                 {plan.cta}
-              </button>
+              </Link>
             </div>
           ))}
         </div>
@@ -143,7 +136,7 @@ export default function PricingPage() {
             <div className="bg-white rounded-xl p-6">
               <h3 className="font-semibold text-slate-900 mb-2">Can I try before I buy?</h3>
               <p className="text-slate-600">
-                Absolutely! Our Free plan lets you create 5 maps per month with no credit card required.
+                Absolutely! Our Free plan lets you create 10 maps per month with no credit card required.
                 Pro plans also come with a 14-day free trial.
               </p>
             </div>
@@ -163,7 +156,7 @@ export default function PricingPage() {
             <div className="bg-white rounded-xl p-6">
               <h3 className="font-semibold text-slate-900 mb-2">What's included in API access?</h3>
               <p className="text-slate-600">
-                Pro and Team plans include access to our REST API for programmatic map creation.
+                All plans include API access. Free gets 100 calls/month, Pro gets 10,000, and Team gets 100,000.
                 Perfect for AI agents, automation, and custom integrations.
               </p>
             </div>
@@ -174,11 +167,10 @@ export default function PricingPage() {
       {/* Footer */}
       <footer className="border-t border-slate-200 py-8">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between text-sm text-slate-500">
-          <p>© 2025 Spatix. All rights reserved.</p>
+          <p>© 2026 Spatix. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="/developers" className="hover:text-slate-700">API</Link>
             <Link href="/pricing" className="hover:text-slate-700">Pricing</Link>
-            <a href="https://twitter.com/spatix" className="hover:text-slate-700">Twitter</a>
           </div>
         </div>
       </footer>

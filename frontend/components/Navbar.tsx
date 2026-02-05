@@ -2,15 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 
 export default function Navbar() {
   const router = useRouter()
+  const pathname = usePathname()
   const [user, setUser] = useState<{ email: string } | null>(null)
   const [showMenu, setShowMenu] = useState(false)
 
   useEffect(() => {
-    // Check for logged in user
     const email = localStorage.getItem('spatix_email')
     const token = localStorage.getItem('spatix_token')
     if (email && token) {
@@ -27,6 +27,8 @@ export default function Navbar() {
     router.push('/')
   }
 
+  const isActive = (path: string) => pathname === path
+
   return (
     <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
       <Link href="/" className="flex items-center gap-2">
@@ -35,11 +37,24 @@ export default function Navbar() {
         </div>
         <span className="font-bold text-xl text-slate-900">Spatix</span>
       </Link>
+      
       <div className="flex items-center gap-6">
-        <Link href="/developers" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
+        <Link 
+          href="/" 
+          className={`text-sm font-medium transition-colors ${isActive('/') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
+        >
+          Maps
+        </Link>
+        <Link 
+          href="/developers" 
+          className={`text-sm font-medium transition-colors ${isActive('/developers') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
+        >
           Developers
         </Link>
-        <Link href="/pricing" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
+        <Link 
+          href="/pricing" 
+          className={`text-sm font-medium transition-colors ${isActive('/pricing') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
+        >
           Pricing
         </Link>
         
@@ -58,32 +73,43 @@ export default function Navbar() {
             </button>
             
             {showMenu && (
-              <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50">
-                <div className="px-4 py-2 border-b border-slate-100">
-                  <p className="text-sm font-medium text-slate-900 truncate">{user.email}</p>
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50">
+                  <div className="px-4 py-2 border-b border-slate-100">
+                    <p className="text-sm font-medium text-slate-900 truncate">{user.email}</p>
+                    <p className="text-xs text-slate-500">Free plan</p>
+                  </div>
+                  <Link
+                    href="/account"
+                    onClick={() => setShowMenu(false)}
+                    className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    My Account
+                  </Link>
+                  <Link
+                    href="/account/maps"
+                    onClick={() => setShowMenu(false)}
+                    className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    My Maps
+                  </Link>
+                  <Link
+                    href="/developers"
+                    onClick={() => setShowMenu(false)}
+                    className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    API Keys
+                  </Link>
+                  <hr className="my-2 border-slate-100" />
+                  <button
+                    onClick={handleLogout}
+                    className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                  >
+                    Log out
+                  </button>
                 </div>
-                <Link
-                  href="/account"
-                  onClick={() => setShowMenu(false)}
-                  className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  My Account
-                </Link>
-                <Link
-                  href="/account/maps"
-                  onClick={() => setShowMenu(false)}
-                  className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  My Maps
-                </Link>
-                <hr className="my-2 border-slate-100" />
-                <button
-                  onClick={handleLogout}
-                  className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
-                >
-                  Log out
-                </button>
-              </div>
+              </>
             )}
           </div>
         ) : (
