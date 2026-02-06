@@ -36,11 +36,8 @@ router = APIRouter(prefix="/api", tags=["maps"])
 
 # Rate limiting (in-memory - acceptable for rate limits)
 _ip_requests: Dict[str, List[datetime]] = {}
-_user_requests: Dict[int, List[datetime]] = {}
 RATE_LIMIT_WINDOW = 3600  # 1 hour
-RATE_LIMIT_MAX_ANONYMOUS = 10  # 10 maps per hour for anonymous users
-RATE_LIMIT_MAX_FREE = 60  # 60 maps per hour for free tier
-RATE_LIMIT_MAX_PRO = 500  # 500 maps per hour for pro tier
+RATE_LIMIT_MAX = 100  # 100 maps per hour for all users
 
 # Maximum retries for ID collision
 MAX_ID_COLLISION_RETRIES = 5
@@ -108,24 +105,14 @@ class MapResponse(BaseModel):
 
 # ==================== UTILITIES ====================
 
-def check_rate_limit(ip: str, user_id: int = None, user_plan: str = None) -> bool:
-    """Rate limiting - more generous for authenticated users."""
+def check_rate_limit(ip: str, user_id: int = None) -> bool:
+    """Rate limiting - same generous limit for everyone."""
     now = datetime.now(timezone.utc)
-
-    # Determine rate limit based on user status
-    if user_id and user_plan == "pro":
-        rate_limit = RATE_LIMIT_MAX_PRO
-        key = f"user_{user_id}"
-        requests_dict = _user_requests
-    elif user_id:
-        rate_limit = RATE_LIMIT_MAX_FREE
-        key = f"user_{user_id}"
-        requests_dict = _user_requests
-    else:
-        rate_limit = RATE_LIMIT_MAX_ANONYMOUS
-        key = ip
-        requests_dict = _ip_requests
-
+    
+    # Use user_id if authenticated, otherwise IP
+    key = f"user_{user_id}" if user_id else ip
+    requests_dict = _ip_requests
+    
     if key in requests_dict:
         requests_dict[key] = [
             t for t in requests_dict[key]
@@ -134,11 +121,13 @@ def check_rate_limit(ip: str, user_id: int = None, user_plan: str = None) -> boo
     else:
         requests_dict[key] = []
 
-    if len(requests_dict[key]) >= rate_limit:
+    if len(requests_dict[key]) >= RATE_LIMIT_MAX:
         return False
 
     requests_dict[key].append(now)
     return True
+
+
 
 
 def detect_and_normalize_data(data: Union[Dict, List, str]) -> Dict[str, Any]:
@@ -385,26 +374,22 @@ async def create_map(
 
     # Try to get user from auth token (optional - maps can be created anonymously)
     user_id = None
-    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
-            user_plan = payload.get("plan", "free")
         except Exception:
             pass  # Anonymous creation is fine
 
     # Rate limit check
-    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
-    if not check_rate_limit(client_ip, user_id, user_plan):
+    if not check_rate_limit(client_ip, user_id):
         raise HTTPException(
             status_code=429,
             detail={
                 "error": "RATE_LIMIT_EXCEEDED",
-                "message": f"Rate limit exceeded. Max {rate_limit} maps per hour." +
-                          (" Sign in for higher limits." if not user_id else ""),
+                "message": f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.",
                 "retry_after": 3600
             }
         )

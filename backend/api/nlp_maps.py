@@ -7,7 +7,7 @@ POST /api/map/from-text - Create map from natural language description
 POST /api/map/from-addresses - Create map from a list of addresses
 POST /api/map/route - Create a map showing a route between points
 """
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
 import re
@@ -19,6 +19,8 @@ from api.maps import (
     generate_delete_token,
     auto_style,
     MapCreateResponse,
+    check_rate_limit,
+    RATE_LIMIT_MAX,
 )
 from database import create_map as db_create_map
 import hashlib
@@ -35,6 +37,7 @@ class TextMapRequest(BaseModel):
     text: str = Field(..., description="Natural language description of the map to create")
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
+    email: Optional[str] = None
 
 
 class AddressMapRequest(BaseModel):
@@ -45,6 +48,7 @@ class AddressMapRequest(BaseModel):
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
     connect_points: bool = Field(default=False, description="Draw lines connecting points in order")
     labels: Optional[List[str]] = Field(default=None, description="Labels for each point (same order as addresses)")
+    email: Optional[str] = None
 
 
 class RouteMapRequest(BaseModel):
@@ -54,6 +58,7 @@ class RouteMapRequest(BaseModel):
     waypoints: Optional[List[str]] = Field(default=None, description="Intermediate stops")
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
+    email: Optional[str] = None
 
 
 class TextMapResponse(BaseModel):
@@ -230,6 +235,7 @@ def calculate_bounds_from_points(points: List[Dict[str, Any]]) -> List[List[floa
 
 @router.post("/map/from-text", response_model=TextMapResponse)
 async def create_map_from_text(
+    request: Request,
     body: TextMapRequest,
     authorization: Optional[str] = Header(None)
 ):
@@ -243,6 +249,11 @@ async def create_map_from_text(
 
     The AI will extract locations, geocode them, and create a map.
     """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.")
+
     # Extract locations from text
     locations = extract_locations_from_text(body.text)
 
@@ -294,6 +305,9 @@ async def create_map_from_text(
 
     delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
+    # Get creator email if provided
+    creator_email = body.email.strip().lower() if body.email else None
+
     db_create_map(
         map_id=map_id,
         title=body.title or f"Map: {body.text[:50]}...",
@@ -301,7 +315,8 @@ async def create_map_from_text(
         config=map_config,
         delete_token_hash=delete_token_hash,
         user_id=user_id,
-        public=True
+        public=True,
+        creator_email=creator_email,
     )
 
     base_url = "https://spatix.io"
@@ -319,6 +334,7 @@ async def create_map_from_text(
 
 @router.post("/map/from-addresses", response_model=MapCreateResponse)
 async def create_map_from_addresses(
+    request: Request,
     body: AddressMapRequest,
     authorization: Optional[str] = Header(None)
 ):
@@ -333,6 +349,11 @@ async def create_map_from_addresses(
 
     Optionally connect points with lines (for routes/journeys).
     """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.")
+
     if not body.addresses:
         raise HTTPException(status_code=400, detail="At least one address is required")
 
@@ -393,6 +414,9 @@ async def create_map_from_addresses(
 
     delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
+    # Get creator email if provided
+    creator_email = body.email.strip().lower() if body.email else None
+
     db_create_map(
         map_id=map_id,
         title=body.title or f"Map with {len(successful)} locations",
@@ -400,7 +424,8 @@ async def create_map_from_addresses(
         config=map_config,
         delete_token_hash=delete_token_hash,
         user_id=user_id,
-        public=True
+        public=True,
+        creator_email=creator_email,
     )
 
     base_url = "https://spatix.io"
@@ -417,6 +442,7 @@ async def create_map_from_addresses(
 
 @router.post("/map/route", response_model=TextMapResponse)
 async def create_route_map(
+    request: Request,
     body: RouteMapRequest,
     authorization: Optional[str] = Header(None)
 ):
@@ -433,6 +459,11 @@ async def create_route_map(
         "waypoints": ["Monterey, CA", "Santa Barbara, CA"]
     }
     """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.")
+
     # Build list of all points
     all_points = [body.start]
     if body.waypoints:
@@ -505,6 +536,9 @@ async def create_route_map(
     if body.waypoints:
         title += f" (via {len(body.waypoints)} stops)"
 
+    # Get creator email if provided
+    creator_email = body.email.strip().lower() if body.email else None
+
     db_create_map(
         map_id=map_id,
         title=title,
@@ -512,7 +546,8 @@ async def create_route_map(
         config=map_config,
         delete_token_hash=delete_token_hash,
         user_id=user_id,
-        public=True
+        public=True,
+        creator_email=creator_email,
     )
 
     base_url = "https://spatix.io"
