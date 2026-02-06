@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect, useState, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
@@ -31,7 +31,7 @@ const BASEMAPS: Record<string, string | object> = {
  *   zoom     - Initial zoom level
  *   lat, lng - Initial center
  */
-export default function EmbedPreviewPage() {
+function EmbedPreviewContent() {
   const searchParams = useSearchParams()
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
@@ -204,5 +204,21 @@ export default function EmbedPreviewPage() {
         </div>
       )}
     </div>
+  )
+}
+
+function LoadingFallback() {
+  return (
+    <div className="w-full h-full flex items-center justify-center bg-slate-100">
+      <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
+    </div>
+  )
+}
+
+export default function EmbedPreviewPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <EmbedPreviewContent />
+    </Suspense>
   )
 }
