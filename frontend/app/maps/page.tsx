@@ -117,6 +117,9 @@ export default function MapsPage() {
   const [mapTitle, setMapTitle] = useState("")
   const [copiedLink, setCopiedLink] = useState(false)
 
+  // Error toast state
+  const [errorToast, setErrorToast] = useState<string | null>(null)
+
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
   const [loadingMyMaps, setLoadingMyMaps] = useState(false)
@@ -127,6 +130,13 @@ export default function MapsPage() {
     const storedEmail = localStorage.getItem("spatix_save_email")
     if (storedEmail) setEmail(storedEmail)
   }, [])
+
+  // Auto-dismiss error toast
+  useEffect(() => {
+    if (!errorToast) return
+    const t = setTimeout(() => setErrorToast(null), 5000)
+    return () => clearTimeout(t)
+  }, [errorToast])
 
   // Fetch my maps when history tab is opened
   const fetchMyMaps = useCallback(async () => {
@@ -196,7 +206,7 @@ export default function MapsPage() {
       setShowShareModal(true)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error"
-      alert(`Failed to save map: ${message}`)
+      setErrorToast(`Failed to save map: ${message}`)
     } finally {
       setSaving(false)
     }
@@ -544,7 +554,7 @@ export default function MapsPage() {
       
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Upload failed")
+      setErrorToast(err instanceof Error ? err.message : "Upload failed")
     } finally {
       setUploading(false)
     }
@@ -578,7 +588,7 @@ export default function MapsPage() {
       setActivePanel("layers")
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
-      alert("Failed to load sample")
+      setErrorToast("Failed to load sample dataset")
     } finally {
       setUploading(false)
     }
@@ -919,7 +929,23 @@ export default function MapsPage() {
       </div>
 
       {/* Map */}
-      <div ref={mapContainer} className="flex-1" />
+      <div className="flex-1 relative">
+        <div ref={mapContainer} className="absolute inset-0" />
+        {/* First-visit onboarding hint */}
+        {layers.length === 0 && mapReady && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+            <div className="bg-[#29323c]/90 backdrop-blur-sm rounded-2xl px-8 py-6 text-center max-w-sm pointer-events-auto">
+              <div className="w-14 h-14 bg-[#6b5ce7]/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7 text-[#8b7cf7]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <p className="text-white font-semibold mb-1">Upload data to get started</p>
+              <p className="text-[#6a7485] text-sm">Drop a file on the left panel, or try a sample dataset</p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Email Save Modal */}
       {showSaveModal && (
@@ -977,6 +1003,23 @@ export default function MapsPage() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Toast */}
+      {errorToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] animate-[slideDown_0.3s_ease-out]">
+          <div className="bg-red-900/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 max-w-md">
+            <svg className="w-5 h-5 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <p className="text-sm font-medium flex-1">{errorToast}</p>
+            <button onClick={() => setErrorToast(null)} className="text-red-300 hover:text-white ml-2 flex-shrink-0">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}

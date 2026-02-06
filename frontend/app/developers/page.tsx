@@ -74,17 +74,11 @@ export default function DevelopersPage() {
           <h2 className="text-2xl font-bold mb-6">Authentication</h2>
           <div className="bg-white border border-slate-200 rounded-xl p-6">
             <p className="text-slate-700 mb-4">
-              <strong>Free tier:</strong> No authentication required. Rate limited to 60 maps/hour per IP.
+              No authentication required. Just send your request and get a map back.
             </p>
-            <p className="text-slate-700 mb-4">
-              <strong>Pro/Team:</strong> Use the <code className="bg-slate-100 px-2 py-1 rounded text-sm">X-API-Key</code> header.
+            <p className="text-slate-500 text-sm">
+              Rate limited to 60 maps/hour per IP to prevent abuse. Need higher limits? <a href="mailto:hello@spatix.io" className="text-brand-600 hover:underline">Get in touch</a>.
             </p>
-            <div className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto">
-              <pre className="text-sm"><code>{`curl -X POST https://api.spatix.io/api/map \\
-  -H "X-API-Key: your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{"data": {...}}'`}</code></pre>
-            </div>
           </div>
         </section>
 

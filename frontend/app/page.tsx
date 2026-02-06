@@ -334,7 +334,7 @@ export default function Home() {
                   <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  No signup required
+                  Free to use
                 </div>
                 <div className="flex items-center gap-2">
                   <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -445,7 +445,7 @@ export default function Home() {
       <section className="py-20 bg-slate-900 text-white">
         <div className="max-w-5xl mx-auto px-6">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold mb-4">Why teams choose Spatix</h2>
+            <h2 className="text-3xl font-bold mb-4">Why people choose Spatix</h2>
             <p className="text-slate-400 max-w-2xl mx-auto">
               Simpler than Kepler, more powerful than basic tools. Built for speed.
             </p>
@@ -553,7 +553,7 @@ export default function Home() {
       <section className="py-20 bg-brand-600">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-white mb-4">Ready to map your data?</h2>
-          <p className="text-brand-100 mb-8 text-lg">Start free. No credit card required.</p>
+          <p className="text-brand-100 mb-8 text-lg">Upload, style, and share — completely free.</p>
           <a href="/maps" className="inline-block px-8 py-4 bg-white text-brand-600 rounded-xl font-semibold hover:bg-brand-50 transition-colors shadow-lg">
             Create your first map
           </a>
