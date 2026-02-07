@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import Link from "next/link"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
-// Note: @deck.gl/mapbox works with both Mapbox GL JS AND MapLibre GL JS (official support)
 import { MapboxOverlay } from "@deck.gl/mapbox"
 import { ScatterplotLayer, ArcLayer, GeoJsonLayer } from "@deck.gl/layers"
 import { HexagonLayer, HeatmapLayer } from "@deck.gl/aggregation-layers"
@@ -85,8 +84,36 @@ interface Layer {
   vizType: VizType
   height?: number
   radius?: number
+  colorBy?: string | null
+  colorDomain?: number[] | string[]
+  colorType?: 'numeric' | 'categorical'
 }
 
+// Get color for a feature based on color-by attribute
+function getFeatureColor(properties: Record<string, any>, layer: Layer): number[] {
+  if (!layer.colorBy || !layer.colorDomain) return layer.color
+
+  const value = properties[layer.colorBy]
+  if (value == null) return [128, 128, 128]
+
+  if (layer.colorType === 'numeric') {
+    const domain = layer.colorDomain as number[]
+    const [min, max] = [domain[0], domain[domain.length - 1]]
+    const t = max > min ? Math.max(0, Math.min(1, (Number(value) - min) / (max - min))) : 0.5
+    const palette = COLOR_PALETTES.uber
+    const idx = Math.min(Math.floor(t * palette.length), palette.length - 1)
+    const hex = palette[idx].replace('#', '')
+    return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)]
+  }
+
+  if (layer.colorType === 'categorical') {
+    const idx = (layer.colorDomain as string[]).indexOf(String(value))
+    if (idx === -1) return [128, 128, 128]
+    return LAYER_COLORS[idx % LAYER_COLORS.length]
+  }
+
+  return layer.color
+}
 
 interface SavedMap {
   id: string
@@ -121,6 +148,19 @@ export default function MapsPage() {
 
   // Error toast state
   const [errorToast, setErrorToast] = useState<string | null>(null)
+
+  // Tooltip state for hover
+  const [tooltip, setTooltip] = useState<{x: number; y: number; properties: Record<string, any>; layerName: string} | null>(null)
+
+  // Click-to-inspect state
+  const [selectedFeature, setSelectedFeature] = useState<{properties: Record<string, any>; layerName: string; geometryType: string} | null>(null)
+
+  // Cursor coordinate display
+  const [cursorCoords, setCursorCoords] = useState<{lng: number; lat: number} | null>(null)
+
+  // Data table state
+  const [showDataTable, setShowDataTable] = useState(false)
+  const [tableLayerId, setTableLayerId] = useState<string | null>(null)
 
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
@@ -175,33 +215,11 @@ export default function MapsPage() {
 
     setSaving(true)
     try {
-      // Get visible layers and their styles
-      const visibleLayers = layers.filter(l => l.visible)
-      
-      // Merge features but tag each with its layer's style
-      const allFeatures = visibleLayers.flatMap(layer => 
-        (layer.data?.features || []).map((f: any) => ({
-          ...f,
-          properties: {
-            ...f.properties,
-            _layerColor: layer.color,
-            _layerOpacity: layer.opacity,
-            _layerVizType: layer.vizType,
-          }
-        }))
-      )
+      // Merge all visible layer data into a single FeatureCollection
+      const allFeatures = layers
+        .filter(l => l.visible)
+        .flatMap(l => l.data?.features || [])
       const mergedGeojson = { type: "FeatureCollection", features: allFeatures }
-
-      // Build style from first layer (primary style)
-      const primaryLayer = visibleLayers[0]
-      const layerStyle = primaryLayer ? {
-        fillColor: `rgb(${primaryLayer.color[0]},${primaryLayer.color[1]},${primaryLayer.color[2]})`,
-        fillOpacity: primaryLayer.opacity * 0.5,
-        strokeColor: `rgb(${primaryLayer.color[0]},${primaryLayer.color[1]},${primaryLayer.color[2]})`,
-        strokeWidth: 2,
-        strokeOpacity: primaryLayer.opacity,
-        pointRadius: 5,
-      } : undefined
 
       const res = await fetch(`${API_URL}/api/map`, {
         method: "POST",
@@ -211,7 +229,6 @@ export default function MapsPage() {
           title: mapTitle || "Untitled Map",
           style: basemap === "dark" ? "dark" : basemap === "satellite" ? "satellite" : "light",
           email: email.trim().toLowerCase(),
-          layerStyle: layerStyle,
         }),
       })
 
@@ -222,7 +239,9 @@ export default function MapsPage() {
       }
       const data = await res.json()
 
+      // Store email for next time
       localStorage.setItem("spatix_save_email", email.trim().toLowerCase())
+
       setSavedUrl(data.url)
       setSavedMapId(data.id)
       setShowSaveModal(false)
@@ -243,11 +262,24 @@ export default function MapsPage() {
     }
   }
 
+  // Hover handler for deck.gl layers
+  const onLayerHover = useCallback((info: any, layerName: string) => {
+    if (info.object) {
+      // For ScatterplotLayer, data items have {position, properties}
+      // For GeoJsonLayer, data items are GeoJSON features with {properties}
+      // For HexagonLayer, data items are aggregation bins with {points}
+      const props = info.object.properties || {}
+      setTooltip({ x: info.x, y: info.y, properties: props, layerName })
+    } else {
+      setTooltip(null)
+    }
+  }, [])
+
   // Build deck.gl layers
   const deckLayers = useMemo(() => {
     return layers.filter(l => l.visible).flatMap(layer => {
       const features = layer.data?.features || []
-      
+
       // Extract coordinates for point-based layers
       const points = features
         .filter((f: any) => f.geometry?.type === "Point")
@@ -257,6 +289,7 @@ export default function MapsPage() {
         }))
 
       if (layer.vizType === "heatmap" && layer.type === "point") {
+        // HeatmapLayer does not support picking
         return new HeatmapLayer({
           id: `heatmap-${layer.id}`,
           data: points,
@@ -281,6 +314,17 @@ export default function MapsPage() {
           radius: layer.radius || 1000,
           elevationScale: 50,
           extruded: true,
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 60],
+          onHover: (info: any) => {
+            if (info.object) {
+              const count = info.object.points?.length || 0
+              setTooltip({ x: info.x, y: info.y, properties: { "Points in bin": count }, layerName: layer.name })
+            } else {
+              setTooltip(null)
+            }
+          },
           opacity: layer.opacity,
           colorRange: COLOR_PALETTES.uber.map(c => {
             const hex = c.replace('#', '')
@@ -294,7 +338,9 @@ export default function MapsPage() {
           id: `scatter-${layer.id}`,
           data: points,
           getPosition: (d: any) => d.position,
-          getFillColor: layer.color,
+          getFillColor: layer.colorBy
+            ? ((d: any) => getFeatureColor(d.properties, layer)) as any
+            : layer.color,
           getRadius: 5,
           radiusScale: 1,
           radiusMinPixels: 3,
@@ -303,6 +349,14 @@ export default function MapsPage() {
           stroked: true,
           lineWidthMinPixels: 1,
           getLineColor: [255, 255, 255],
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 80],
+          onHover: (info: any) => onLayerHover(info, layer.name),
+          onClick: (info: any) => {
+            if (info.object) setSelectedFeature({ properties: info.object.properties || {}, layerName: layer.name, geometryType: 'Point' })
+          },
+          updateTriggers: { getFillColor: [layer.color, layer.colorBy, layer.colorDomain] },
         })
       }
 
@@ -313,19 +367,31 @@ export default function MapsPage() {
           data: layer.data,
           filled: layer.type === "polygon",
           stroked: true,
-          getFillColor: [...layer.color, Math.floor(layer.opacity * 128)],
-          getLineColor: layer.color,
+          getFillColor: layer.colorBy
+            ? ((d: any) => [...getFeatureColor(d.properties, layer), Math.floor(layer.opacity * 128)]) as any
+            : [...layer.color, Math.floor(layer.opacity * 128)],
+          getLineColor: layer.colorBy
+            ? ((d: any) => getFeatureColor(d.properties, layer)) as any
+            : layer.color,
           getLineWidth: 2,
           lineWidthMinPixels: 1,
           extruded: layer.vizType === "3d",
           getElevation: layer.height || 100,
           opacity: layer.opacity,
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 80],
+          onHover: (info: any) => onLayerHover(info, layer.name),
+          onClick: (info: any) => {
+            if (info.object) setSelectedFeature({ properties: info.object.properties || {}, layerName: layer.name, geometryType: info.object.geometry?.type || layer.type })
+          },
+          updateTriggers: { getFillColor: [layer.color, layer.colorBy, layer.colorDomain, layer.opacity], getLineColor: [layer.color, layer.colorBy, layer.colorDomain] },
         })
       }
 
       return []
     })
-  }, [layers])
+  }, [layers, onLayerHover])
 
   // Update deck overlay
   useEffect(() => {
@@ -348,6 +414,11 @@ export default function MapsPage() {
     })
 
     m.addControl(new maplibregl.NavigationControl({ showCompass: true }), "bottom-right")
+
+    m.on('mousemove', (e) => {
+      setCursorCoords({ lng: e.lngLat.lng, lat: e.lngLat.lat })
+    })
+    m.on('mouseout', () => setCursorCoords(null))
 
     m.on("load", () => {
       // Initialize deck.gl overlay
@@ -503,12 +574,18 @@ export default function MapsPage() {
     const lines: any[] = []
     const polygons: any[] = []
 
-    features.forEach((f: any) => {
-      const type = f.geometry?.type
-      if (type === "Point" || type === "MultiPoint") points.push(f)
-      else if (type === "LineString" || type === "MultiLineString") lines.push(f)
-      else if (type === "Polygon" || type === "MultiPolygon") polygons.push(f)
-    })
+    const classify = (f: any, geom: any) => {
+      const type = geom?.type
+      if (type === "Point" || type === "MultiPoint") points.push({ ...f, geometry: geom })
+      else if (type === "LineString" || type === "MultiLineString") lines.push({ ...f, geometry: geom })
+      else if (type === "Polygon" || type === "MultiPolygon") polygons.push({ ...f, geometry: geom })
+      else if (type === "GeometryCollection") {
+        // Flatten GeometryCollection into individual features per geometry
+        geom.geometries?.forEach((g: any) => classify(f, g))
+      }
+    }
+
+    features.forEach((f: any) => classify(f, f.geometry))
 
     const result: { name: string; type: "point" | "line" | "polygon"; data: any }[] = []
     
@@ -554,6 +631,11 @@ export default function MapsPage() {
       const data = await response.json()
       if (!data.preview_geojson) throw new Error("No geographic data found")
 
+      // Warn if data was truncated to preview limit
+      if (data.feature_count && data.feature_count > 1000) {
+        setErrorToast(`Showing 1,000 of ${data.feature_count.toLocaleString()} features (preview limit)`)
+      }
+
       const baseName = file.name.replace(/\.[^/.]+$/, "")
       const layerGroups = splitByGeometryType(data.preview_geojson, baseName)
 
@@ -577,7 +659,7 @@ export default function MapsPage() {
       
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Upload failed")
+      setErrorToast(err instanceof Error ? err.message : "Upload failed")
     } finally {
       setUploading(false)
     }
@@ -611,7 +693,7 @@ export default function MapsPage() {
       setActivePanel("layers")
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
-      alert("Failed to load sample")
+      setErrorToast("Failed to load sample dataset")
     } finally {
       setUploading(false)
     }
@@ -625,6 +707,53 @@ export default function MapsPage() {
   const updateLayerRadius = (id: string, radius: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, radius } : l))
   const updateLayerHeight = (id: string, height: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, height } : l))
   const removeLayer = (id: string) => setLayers(prev => prev.filter(l => l.id !== id))
+
+  const updateLayerColorBy = (id: string, attribute: string | null) => {
+    setLayers(prev => prev.map(l => {
+      if (l.id !== id) return l
+      if (!attribute) return { ...l, colorBy: null, colorDomain: undefined, colorType: undefined }
+
+      const features = l.data?.features || []
+      const values = features.map((f: any) => f.properties?.[attribute]).filter((v: any) => v != null)
+      const numericValues = values.filter((v: any) => typeof v === 'number' || (typeof v === 'string' && !isNaN(Number(v)) && v.trim() !== ''))
+      const isNumeric = numericValues.length / Math.max(values.length, 1) > 0.8
+
+      if (isNumeric) {
+        const nums = numericValues.map(Number)
+        return { ...l, colorBy: attribute, colorDomain: [Math.min(...nums), Math.max(...nums)], colorType: 'numeric' as const }
+      } else {
+        const unique = Array.from(new Set<string>(values.map(String))).slice(0, 8)
+        return { ...l, colorBy: attribute, colorDomain: unique, colorType: 'categorical' as const }
+      }
+    }))
+  }
+
+  const handleExport = () => {
+    const allFeatures = layers
+      .filter(l => l.visible)
+      .flatMap(l => l.data?.features || [])
+    const geojson = { type: "FeatureCollection", features: allFeatures }
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `spatix-export.geojson`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  // Data table: auto-select first layer when opened
+  const tableLayer = layers.find(l => l.id === tableLayerId) || layers[0] || null
+  const tableColumns = useMemo(() => {
+    if (!tableLayer?.data?.features?.length) return []
+    const colSet = new Set<string>()
+    tableLayer.data.features.forEach((f: any) => {
+      Object.keys(f.properties || {}).forEach((k: string) => colSet.add(k))
+    })
+    return Array.from(colSet)
+  }, [tableLayer])
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -660,8 +789,8 @@ export default function MapsPage() {
           <button
             onClick={() => setActivePanel("layers")}
             className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition-all ${
-              activePanel === "layers" 
-                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]" 
+              activePanel === "layers"
+                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]"
                 : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]/50"
             }`}
           >
@@ -670,8 +799,8 @@ export default function MapsPage() {
           <button
             onClick={() => setActivePanel("add")}
             className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition-all ${
-              activePanel === "add" 
-                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]" 
+              activePanel === "add"
+                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]"
                 : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]/50"
             }`}
           >
@@ -680,8 +809,8 @@ export default function MapsPage() {
           <button
             onClick={() => setActivePanel("history")}
             className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition-all ${
-              activePanel === "history" 
-                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]" 
+              activePanel === "history"
+                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]"
                 : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]/50"
             }`}
           >
@@ -781,6 +910,25 @@ export default function MapsPage() {
                         </div>
                       </div>
 
+                      {/* Color By Attribute */}
+                      {layer.data?.features?.[0]?.properties && Object.keys(layer.data.features[0].properties).length > 0 && (
+                        <div>
+                          <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Color By</label>
+                          <select
+                            value={layer.colorBy || ""}
+                            onChange={(e) => updateLayerColorBy(layer.id, e.target.value || null)}
+                            className="w-full px-3 py-2 bg-[#242730] border border-[#3a4552] rounded-lg text-white text-xs focus:outline-none focus:border-[#6b5ce7] appearance-none cursor-pointer"
+                          >
+                            <option value="">Uniform color</option>
+                            {Array.from(new Set<string>(
+                              (layer.data.features || []).flatMap((f: any) => Object.keys(f.properties || {}))
+                            )).map((attr) => (
+                              <option key={attr} value={attr}>{attr}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
                       {/* Radius (for heatmap/hexagon) */}
                       {(layer.vizType === "heatmap" || layer.vizType === "hexagon") && (
                         <div>
@@ -865,111 +1013,372 @@ export default function MapsPage() {
             </div>
           )}
 
-          {/* My Maps panel */}
+          {/* My Maps Panel */}
           {activePanel === "history" && (
-            <div className="p-4">
+            <div className="p-4 space-y-3">
               {loadingMyMaps ? (
-                <div className="flex justify-center py-12">
-                  <div className="w-8 h-8 rounded-full border-4 border-[#6b5ce7] border-t-transparent animate-spin" />
+                <div className="flex flex-col items-center justify-center py-12">
+                  <div className="w-10 h-10 rounded-full border-4 border-[#6b5ce7] border-t-transparent animate-spin mb-3" />
+                  <p className="text-[#6a7485] text-sm">Loading your maps...</p>
                 </div>
               ) : myMapsError ? (
                 <div className="text-center py-12">
-                  <p className="text-red-400 text-sm mb-3">{myMapsError}</p>
-                  <button onClick={fetchMyMaps} className="text-[#6b5ce7] text-sm font-semibold">Retry</button>
+                  <div className="w-16 h-16 bg-red-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-red-400 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <p className="text-red-400 text-sm font-medium mb-1">{myMapsError}</p>
+                  <button onClick={fetchMyMaps} className="text-[#6b5ce7] text-sm font-semibold hover:text-[#8b7cf7] mt-2">
+                    Try again
+                  </button>
                 </div>
               ) : myMaps.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-16 h-16 bg-[#3a4552] rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <span className="text-3xl opacity-50">🗺️</span>
+                    <svg className="w-8 h-8 text-[#6a7485] opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                    </svg>
                   </div>
-                  <p className="text-[#6a7485] text-sm font-medium">No saved maps yet</p>
-                  <p className="text-[#6a7485] text-xs mt-2">Save a map to see it here</p>
+                  <p className="text-[#6a7485] text-sm font-medium mb-1">No saved maps yet</p>
+                  <p className="text-[#6a7485] text-xs">Save a map to see it here</p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {myMaps.map(m => (
-                    <a
-                      key={m.id}
-                      href={m.url}
-                      className="block p-4 bg-[#3a4552] rounded-xl hover:bg-[#424d5c] transition-all"
-                    >
-                      <p className="text-white text-sm font-semibold truncate">{m.title}</p>
-                      <p className="text-[#6a7485] text-xs mt-1">{m.views} views • {new Date(m.created_at).toLocaleDateString()}</p>
-                    </a>
-                  ))}
-                </div>
+                myMaps.map(m => (
+                  <a
+                    key={m.id}
+                    href={`/m/${m.id}`}
+                    className="block bg-[#3a4552] rounded-xl p-4 hover:bg-[#424d5c] transition-all group"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-white text-sm font-medium truncate group-hover:text-[#8b7cf7] transition-colors">
+                          {m.title || "Untitled Map"}
+                        </p>
+                        <p className="text-[#6a7485] text-xs mt-1">
+                          {new Date(m.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          {m.views > 0 && <span className="ml-2">{m.views} views</span>}
+                        </p>
+                      </div>
+                      <svg className="w-4 h-4 text-[#6a7485] group-hover:text-white flex-shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </div>
+                  </a>
+                ))
               )}
             </div>
           )}
         </div>
 
-        {/* Basemap */}
-        <div className="p-4 border-t border-[#3a4552]">
-          <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Base Map</label>
-          <div className="grid grid-cols-4 gap-1.5">
-            {Object.entries(BASEMAPS).map(([key, { name }]) => (
-              <button key={key} onClick={() => setBasemap(key)} className={`py-2 text-xs font-semibold rounded-lg transition-all ${basemap === key ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>{name}</button>
+        {/* Basemap & Save */}
+        <div className="border-t border-[#3a4552]">
+          <div className="p-4">
+            <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Base Map</label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {Object.entries(BASEMAPS).map(([key, { name }]) => (
+                <button key={key} onClick={() => setBasemap(key)} className={`py-2 text-xs font-semibold rounded-lg transition-all ${basemap === key ? "bg-[#6b5ce7] text-white" : "bg-[#242730] text-[#6a7485] hover:text-white"}`}>{name}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Save & Share + Export buttons */}
+          {layers.length > 0 && (
+            <div className="px-4 pb-4 space-y-2">
+              <button
+                onClick={() => setShowSaveModal(true)}
+                className="w-full py-3 bg-[#6b5ce7] hover:bg-[#5a4bd6] text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#6b5ce7]/25"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                Save & Share
+              </button>
+              <button
+                onClick={handleExport}
+                className="w-full py-2.5 border border-[#3a4552] text-[#6a7485] hover:text-white hover:bg-[#3a4552] font-medium rounded-xl transition-all flex items-center justify-center gap-2 text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download GeoJSON
+              </button>
+              <button
+                onClick={() => { setShowDataTable(!showDataTable); if (!tableLayerId && layers[0]) setTableLayerId(layers[0].id) }}
+                className={`w-full py-2.5 border font-medium rounded-xl transition-all flex items-center justify-center gap-2 text-sm ${
+                  showDataTable
+                    ? "border-[#6b5ce7] text-[#8b7cf7] bg-[#6b5ce7]/10"
+                    : "border-[#3a4552] text-[#6a7485] hover:text-white hover:bg-[#3a4552]"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Data Table
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Map + Data Table */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className={`relative ${showDataTable ? 'flex-1 min-h-0' : 'flex-1'}`}>
+        <div ref={mapContainer} className="absolute inset-0" />
+        {/* First-visit onboarding hint */}
+        {layers.length === 0 && mapReady && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+            <div className="bg-[#29323c]/90 backdrop-blur-sm rounded-2xl px-8 py-6 text-center max-w-sm pointer-events-auto">
+              <div className="w-14 h-14 bg-[#6b5ce7]/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7 text-[#8b7cf7]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <p className="text-white font-semibold mb-1">Upload data to get started</p>
+              <p className="text-[#6a7485] text-sm">Drop a file on the left panel, or try a sample dataset</p>
+            </div>
+          </div>
+        )}
+        {/* Hover Tooltip */}
+        {tooltip && (
+          <div
+            className="absolute z-20 pointer-events-none"
+            style={{ left: Math.min(tooltip.x + 12, (typeof window !== 'undefined' ? window.innerWidth - 340 - 280 : 400)), top: tooltip.y - 12 }}
+          >
+            <div className="bg-[#1a1e25]/95 backdrop-blur-sm rounded-lg shadow-xl border border-[#3a4552] px-3 py-2.5 max-w-[260px]">
+              <p className="text-[#8b7cf7] text-[10px] font-semibold uppercase tracking-wider mb-1.5">{tooltip.layerName}</p>
+              <div className="space-y-1">
+                {Object.entries(tooltip.properties)
+                  .filter(([, v]) => v != null && v !== '' && v !== undefined)
+                  .slice(0, 12)
+                  .map(([key, value]) => (
+                    <div key={key} className="flex gap-2 text-xs leading-tight">
+                      <span className="text-[#6a7485] shrink-0 truncate max-w-[90px]">{key}</span>
+                      <span className="text-white truncate">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                    </div>
+                  ))
+                }
+                {Object.keys(tooltip.properties).filter(k => tooltip.properties[k] != null && tooltip.properties[k] !== '').length > 12 && (
+                  <p className="text-[#6a7485] text-[10px] mt-1">+ {Object.keys(tooltip.properties).length - 12} more fields</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Click-to-Inspect Panel */}
+        {selectedFeature && (
+          <div className="absolute top-4 right-4 z-20 w-80 max-h-[70vh] bg-[#1a1e25]/95 backdrop-blur-sm rounded-xl shadow-2xl border border-[#3a4552] overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#3a4552]">
+              <div>
+                <p className="text-[#8b7cf7] text-[10px] font-semibold uppercase tracking-wider">{selectedFeature.layerName}</p>
+                <p className="text-[#6a7485] text-[10px]">{selectedFeature.geometryType}</p>
+              </div>
+              <button onClick={() => setSelectedFeature(null)} className="text-[#6a7485] hover:text-white p-1 rounded-lg hover:bg-[#3a4552] transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-[calc(70vh-48px)] p-4 space-y-0">
+              {Object.entries(selectedFeature.properties)
+                .filter(([, v]) => v != null && v !== '')
+                .map(([key, value]) => (
+                  <div key={key} className="flex justify-between gap-3 text-xs py-2 border-b border-[#3a4552]/50 last:border-0">
+                    <span className="text-[#6a7485] font-medium shrink-0">{key}</span>
+                    <span className="text-white text-right break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                  </div>
+                ))
+              }
+              {Object.keys(selectedFeature.properties).filter(k => selectedFeature.properties[k] != null && selectedFeature.properties[k] !== '').length === 0 && (
+                <p className="text-[#6a7485] text-xs text-center py-4">No attributes</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Legend for Color-By Layers */}
+        {layers.some(l => l.visible && l.colorBy) && (
+          <div className="absolute bottom-10 left-2 z-10 bg-[#1a1e25]/90 backdrop-blur-sm rounded-xl px-4 py-3 border border-[#3a4552] max-w-[220px]">
+            {layers.filter(l => l.visible && l.colorBy).map(layer => (
+              <div key={layer.id} className="mb-3 last:mb-0">
+                <p className="text-[10px] font-semibold text-[#8b7cf7] uppercase tracking-wider mb-2">{layer.colorBy}</p>
+                {layer.colorType === 'numeric' ? (
+                  <div>
+                    <div className="h-2.5 rounded-full" style={{ background: `linear-gradient(to right, ${COLOR_PALETTES.uber.join(', ')})` }} />
+                    <div className="flex justify-between text-[10px] text-[#6a7485] mt-1">
+                      <span>{(layer.colorDomain as number[])?.[0]?.toLocaleString()}</span>
+                      <span>{(layer.colorDomain as number[])?.[1]?.toLocaleString()}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {(layer.colorDomain as string[])?.map((val, i) => (
+                      <div key={val} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: `rgb(${LAYER_COLORS[i % LAYER_COLORS.length].join(',')})` }} />
+                        <span className="text-[10px] text-[#6a7485] truncate">{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
+        )}
+
+        {/* Coordinate Display */}
+        {cursorCoords && (
+          <div className="absolute bottom-2 left-2 z-10 bg-[#1a1e25]/80 backdrop-blur-sm rounded-lg px-3 py-1.5 text-[11px] font-mono text-[#6a7485]">
+            {cursorCoords.lat.toFixed(6)}, {cursorCoords.lng.toFixed(6)}
+          </div>
+        )}
         </div>
 
-        {/* Save & Share button */}
-        {layers.length > 0 && (
-          <div className="px-4 pb-4">
-            <button
-              onClick={() => setShowSaveModal(true)}
-              className="w-full py-3 bg-[#6b5ce7] hover:bg-[#5a4bd6] text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#6b5ce7]/25"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-              </svg>
-              Save & Share
-            </button>
+        {/* Data Table Panel */}
+        {showDataTable && layers.length > 0 && (
+          <div className="h-[280px] bg-[#1a1e25] border-t border-[#3a4552] flex flex-col shrink-0">
+            {/* Table header with layer tabs */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[#3a4552] shrink-0">
+              <div className="flex items-center gap-1 overflow-x-auto min-w-0">
+                {layers.map(layer => (
+                  <button
+                    key={layer.id}
+                    onClick={() => setTableLayerId(layer.id)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-all ${
+                      (tableLayerId === layer.id || (!tableLayerId && layer.id === layers[0]?.id))
+                        ? "bg-[#6b5ce7] text-white"
+                        : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]"
+                    }`}
+                  >
+                    {layer.name}
+                    <span className="ml-1.5 opacity-60">({(layer.data?.features?.length || 0).toLocaleString()})</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowDataTable(false)}
+                className="text-[#6a7485] hover:text-white p-1.5 rounded-lg hover:bg-[#3a4552] transition-colors ml-2 shrink-0"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {/* Table content */}
+            {tableLayer && tableColumns.length > 0 ? (
+              <div className="flex-1 overflow-auto min-h-0">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-[#242730]">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider border-b border-[#3a4552] whitespace-nowrap">#</th>
+                      {tableColumns.map(col => (
+                        <th key={col} className="px-3 py-2 text-left text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider border-b border-[#3a4552] whitespace-nowrap">{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(tableLayer.data?.features || []).map((feature: any, idx: number) => (
+                      <tr
+                        key={idx}
+                        onClick={() => {
+                          const props = feature.properties || {}
+                          setSelectedFeature({ properties: props, layerName: tableLayer.name, geometryType: feature.geometry?.type || tableLayer.type })
+                        }}
+                        className="hover:bg-[#6b5ce7]/10 cursor-pointer border-b border-[#3a4552]/30 transition-colors"
+                      >
+                        <td className="px-3 py-1.5 text-[#6a7485] tabular-nums">{idx + 1}</td>
+                        {tableColumns.map(col => (
+                          <td key={col} className="px-3 py-1.5 text-white max-w-[200px] truncate" title={feature.properties?.[col] != null ? String(feature.properties[col]) : ''}>
+                            {feature.properties?.[col] != null ? (typeof feature.properties[col] === 'object' ? JSON.stringify(feature.properties[col]) : String(feature.properties[col])) : ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center">
+                <p className="text-[#6a7485] text-sm">No attribute data available</p>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Map */}
-      <div ref={mapContainer} className="flex-1" />
-
-      {/* Error Toast */}
-      {errorToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60]">
-          <div className="bg-red-900/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 max-w-md">
-            <svg className="w-5 h-5 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <p className="text-sm font-medium flex-1">{errorToast}</p>
-            <button onClick={() => setErrorToast(null)} className="text-red-300 hover:text-white ml-2">✕</button>
-          </div>
-        </div>
-      )}
-
-      {/* Save Modal */}
+      {/* Email Save Modal */}
       {showSaveModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-[#29323c] rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
             <div className="p-6">
               <h3 className="text-xl font-bold text-white mb-1">Save & Share Your Map</h3>
-              <p className="text-[#6a7485] text-sm mb-6">Enter your email to save and get a shareable link.</p>
+              <p className="text-[#6a7485] text-sm mb-6">Enter your email to save your map and get a shareable link. It&apos;s free.</p>
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Map Title</label>
-                  <input type="text" value={mapTitle} onChange={(e) => setMapTitle(e.target.value)} placeholder="My Map" className="w-full px-4 py-3 bg-[#242730] border border-[#3a4552] rounded-xl text-white placeholder-[#6a7485] text-sm focus:outline-none focus:border-[#6b5ce7]" />
+                  <input
+                    type="text"
+                    value={mapTitle}
+                    onChange={(e) => setMapTitle(e.target.value)}
+                    placeholder="My Map"
+                    className="w-full px-4 py-3 bg-[#242730] border border-[#3a4552] rounded-xl text-white placeholder-[#6a7485] text-sm focus:outline-none focus:border-[#6b5ce7] transition-colors"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Email</label>
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="w-full px-4 py-3 bg-[#242730] border border-[#3a4552] rounded-xl text-white placeholder-[#6a7485] text-sm focus:outline-none focus:border-[#6b5ce7]" onKeyDown={(e) => e.key === "Enter" && handleSaveMap()} />
-                  <p className="text-[#6a7485] text-xs mt-2">We'll use this to let you find your maps later.</p>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full px-4 py-3 bg-[#242730] border border-[#3a4552] rounded-xl text-white placeholder-[#6a7485] text-sm focus:outline-none focus:border-[#6b5ce7] transition-colors"
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveMap()}
+                  />
+                  <p className="text-[#6a7485] text-xs mt-2">We&apos;ll use this to let you find your maps later. No spam.</p>
                 </div>
               </div>
             </div>
+
             <div className="flex gap-3 p-6 pt-0">
-              <button onClick={() => setShowSaveModal(false)} className="flex-1 py-3 border border-[#3a4552] text-[#6a7485] rounded-xl font-medium hover:bg-[#3a4552] hover:text-white transition-colors">Cancel</button>
-              <button onClick={handleSaveMap} disabled={saving || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)} className="flex-1 py-3 bg-[#6b5ce7] text-white rounded-xl font-semibold hover:bg-[#5a4bd6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {saving ? <><div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />Saving...</> : "Save & Get Link"}
+              <button
+                onClick={() => setShowSaveModal(false)}
+                className="flex-1 py-3 border border-[#3a4552] text-[#6a7485] rounded-xl font-medium hover:bg-[#3a4552] hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveMap}
+                disabled={saving || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)}
+                className="flex-1 py-3 bg-[#6b5ce7] text-white rounded-xl font-semibold hover:bg-[#5a4bd6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {saving ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save & Get Link"
+                )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Toast */}
+      {errorToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] animate-[slideDown_0.3s_ease-out]">
+          <div className="bg-red-900/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 max-w-md">
+            <svg className="w-5 h-5 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <p className="text-sm font-medium flex-1">{errorToast}</p>
+            <button onClick={() => setErrorToast(null)} className="text-red-300 hover:text-white ml-2 flex-shrink-0">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
@@ -988,18 +1397,66 @@ export default function MapsPage() {
                 <h3 className="text-xl font-bold text-slate-900 mb-1">Map saved!</h3>
                 <p className="text-slate-500 text-sm">Your map is ready to share</p>
               </div>
+
               <div className="bg-slate-50 rounded-xl p-4 mb-4">
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Share URL</label>
                 <div className="flex gap-2">
-                  <input type="text" value={savedUrl} readOnly className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-mono text-slate-700 truncate" />
-                  <button onClick={copyShareLink} className={`px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${copiedLink ? "bg-green-100 text-green-700" : "bg-slate-900 text-white hover:bg-slate-800"}`}>
+                  <input
+                    type="text"
+                    value={savedUrl}
+                    readOnly
+                    className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-mono text-slate-700 truncate"
+                  />
+                  <button
+                    onClick={copyShareLink}
+                    className={`px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                      copiedLink ? "bg-green-100 text-green-700" : "bg-slate-900 text-white hover:bg-slate-800"
+                    }`}
+                  >
                     {copiedLink ? "Copied!" : "Copy"}
                   </button>
                 </div>
               </div>
+
+              <div className="bg-slate-50 rounded-xl p-4 mb-6">
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Embed Code</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={`<iframe src="${savedUrl}?embed=1" width="600" height="400" frameborder="0"></iframe>`}
+                    readOnly
+                    className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-mono text-slate-500 truncate"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`<iframe src="${savedUrl}?embed=1" width="600" height="400" frameborder="0"></iframe>`)
+                    }}
+                    className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium whitespace-nowrap hover:bg-slate-200 transition-colors"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+
               <div className="flex gap-3">
-                <a href={savedUrl} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 text-center transition-colors">View Map</a>
-                <button onClick={() => { setShowShareModal(false); setSavedUrl(null); setSavedMapId(null); }} className="flex-1 py-3 border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors">Keep Editing</button>
+                <a
+                  href={savedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 text-center transition-colors"
+                >
+                  View Map
+                </a>
+                <button
+                  onClick={() => {
+                    setShowShareModal(false)
+                    setSavedUrl(null)
+                    setSavedMapId(null)
+                  }}
+                  className="flex-1 py-3 border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors"
+                >
+                  Keep Editing
+                </button>
               </div>
             </div>
           </div>

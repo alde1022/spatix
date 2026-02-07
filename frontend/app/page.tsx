@@ -7,8 +7,6 @@ import Link from "next/link"
 import Navbar from "@/components/Navbar"
 import UploadZone from "@/components/UploadZone"
 
-const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false })
-const MapPreview = dynamic(() => import("@/components/MapPreview"), { ssr: false })
 const HeroMap = dynamic(() => import("@/components/HeroMap"), { ssr: false })
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
@@ -156,13 +154,9 @@ interface UploadError extends Error {
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null)
-  const [geojson, setGeojson] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
-  const [showCanvas, setShowCanvas] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [savedUrl, setSavedUrl] = useState<string | null>(null)
   const [selectedExample, setSelectedExample] = useState<typeof exampleMaps[0] | null>(null)
   const router = useRouter()
 
@@ -203,8 +197,13 @@ export default function Home() {
       const data = await response.json()
       
       if (data.preview_geojson) {
-        setGeojson(data.preview_geojson)
-        setShowCanvas(true)
+        const baseName = selectedFile.name.replace(/\.[^/.]+$/, "")
+        localStorage.setItem('spatix_example_data', JSON.stringify({
+          geojson: data.preview_geojson,
+          name: baseName
+        }))
+        router.push('/maps')
+        return
       } else if (data.error) {
         throw new Error(data.error)
       } else {
@@ -223,72 +222,6 @@ export default function Home() {
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleSave = async (config: any) => {
-    setSaving(true)
-    try {
-      const response = await fetch(`${API_URL}/api/map`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          data: config.geojson,
-          title: file?.name.replace(/\.[^/.]+$/, "") || "My Map",
-          style: config.basemap,
-        }),
-      })
-      if (!response.ok) throw new Error("Failed to save")
-      const data = await response.json()
-      setSavedUrl(data.url)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save map")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleClose = () => {
-    setShowCanvas(false)
-    setGeojson(null)
-    setFile(null)
-    setSavedUrl(null)
-    setError(null)
-  }
-
-  if (showCanvas && geojson) {
-    return (
-      <>
-        <MapCanvas geojson={geojson} onSave={handleSave} onClose={handleClose} saving={saving} />
-        {savedUrl && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md mx-4">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 mb-1">Map saved!</h3>
-                <p className="text-slate-500">Your map is ready to share</p>
-              </div>
-              
-              <div className="bg-slate-50 rounded-xl p-4 mb-6">
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Share URL</label>
-                <div className="flex gap-2">
-                  <input type="text" value={savedUrl} readOnly className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-mono text-slate-700 truncate" />
-                  <button onClick={() => navigator.clipboard.writeText(savedUrl)} className="px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium whitespace-nowrap">Copy</button>
-                </div>
-              </div>
-              
-              <div className="flex gap-3">
-                <a href={savedUrl} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 text-center transition-colors">View Map</a>
-                <button onClick={handleClose} className="flex-1 py-3 border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors">Create Another</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </>
-    )
   }
 
   return (

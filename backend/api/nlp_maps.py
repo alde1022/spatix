@@ -20,9 +20,11 @@ from api.maps import (
     auto_style,
     MapCreateResponse,
     check_rate_limit,
-    RATE_LIMIT_MAX,
+    RATE_LIMIT_MAX_ANONYMOUS,
+    RATE_LIMIT_MAX_FREE,
+    RATE_LIMIT_MAX_PRO,
 )
-from database import create_map as db_create_map
+from database import create_map as db_create_map, collect_email
 import hashlib
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ class TextMapRequest(BaseModel):
     text: str = Field(..., description="Natural language description of the map to create")
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
-    email: Optional[str] = None
+    email: Optional[str] = Field(default=None, description="Creator email for map history")
 
 
 class AddressMapRequest(BaseModel):
@@ -48,7 +50,7 @@ class AddressMapRequest(BaseModel):
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
     connect_points: bool = Field(default=False, description="Draw lines connecting points in order")
     labels: Optional[List[str]] = Field(default=None, description="Labels for each point (same order as addresses)")
-    email: Optional[str] = None
+    email: Optional[str] = Field(default=None, description="Creator email for map history")
 
 
 class RouteMapRequest(BaseModel):
@@ -58,7 +60,7 @@ class RouteMapRequest(BaseModel):
     waypoints: Optional[List[str]] = Field(default=None, description="Intermediate stops")
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
-    email: Optional[str] = None
+    email: Optional[str] = Field(default=None, description="Creator email for map history")
 
 
 class TextMapResponse(BaseModel):
@@ -231,12 +233,23 @@ def calculate_bounds_from_points(points: List[Dict[str, Any]]) -> List[List[floa
     ]
 
 
+def _clean_email(email: Optional[str]) -> Optional[str]:
+    """Validate and clean an email address, return None if invalid."""
+    if not email:
+        return None
+    import re as _re
+    cleaned = email.strip().lower()
+    if _re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', cleaned):
+        return cleaned
+    return None
+
+
 # ==================== ENDPOINTS ====================
 
 @router.post("/map/from-text", response_model=TextMapResponse)
 async def create_map_from_text(
-    request: Request,
     body: TextMapRequest,
+    request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -249,11 +262,6 @@ async def create_map_from_text(
 
     The AI will extract locations, geocode them, and create a map.
     """
-    # Rate limit check
-    client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(client_ip):
-        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.")
-
     # Extract locations from text
     locations = extract_locations_from_text(body.text)
 
@@ -279,14 +287,25 @@ async def create_map_from_text(
 
     # Get user ID if authenticated
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass
+
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+        )
 
     # Create map
     map_id = generate_map_id()
@@ -305,8 +324,10 @@ async def create_map_from_text(
 
     delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
-    # Get creator email if provided
-    creator_email = body.email.strip().lower() if body.email else None
+    # Collect creator email if provided
+    creator_email = _clean_email(body.email)
+    if creator_email:
+        collect_email(creator_email, source="nlp_from_text")
 
     db_create_map(
         map_id=map_id,
@@ -334,8 +355,8 @@ async def create_map_from_text(
 
 @router.post("/map/from-addresses", response_model=MapCreateResponse)
 async def create_map_from_addresses(
-    request: Request,
     body: AddressMapRequest,
+    request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -349,11 +370,6 @@ async def create_map_from_addresses(
 
     Optionally connect points with lines (for routes/journeys).
     """
-    # Rate limit check
-    client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(client_ip):
-        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.")
-
     if not body.addresses:
         raise HTTPException(status_code=400, detail="At least one address is required")
 
@@ -382,14 +398,25 @@ async def create_map_from_addresses(
 
     # Get user ID if authenticated
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass
+
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+        )
 
     # Create map
     map_id = generate_map_id()
@@ -414,8 +441,10 @@ async def create_map_from_addresses(
 
     delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
-    # Get creator email if provided
-    creator_email = body.email.strip().lower() if body.email else None
+    # Collect creator email if provided
+    creator_email = _clean_email(body.email)
+    if creator_email:
+        collect_email(creator_email, source="nlp_from_addresses")
 
     db_create_map(
         map_id=map_id,
@@ -442,8 +471,8 @@ async def create_map_from_addresses(
 
 @router.post("/map/route", response_model=TextMapResponse)
 async def create_route_map(
-    request: Request,
     body: RouteMapRequest,
+    request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -459,11 +488,6 @@ async def create_route_map(
         "waypoints": ["Monterey, CA", "Santa Barbara, CA"]
     }
     """
-    # Rate limit check
-    client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(client_ip):
-        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.")
-
     # Build list of all points
     all_points = [body.start]
     if body.waypoints:
@@ -501,14 +525,25 @@ async def create_route_map(
 
     # Get user ID if authenticated
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass
+
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+        )
 
     # Create map
     map_id = generate_map_id()
@@ -536,8 +571,10 @@ async def create_route_map(
     if body.waypoints:
         title += f" (via {len(body.waypoints)} stops)"
 
-    # Get creator email if provided
-    creator_email = body.email.strip().lower() if body.email else None
+    # Collect creator email if provided
+    creator_email = _clean_email(body.email)
+    if creator_email:
+        collect_email(creator_email, source="nlp_route")
 
     db_create_map(
         map_id=map_id,
