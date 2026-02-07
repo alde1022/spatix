@@ -28,6 +28,10 @@ from database import (
     get_user_map_count,
     collect_email,
     get_maps_by_email,
+    get_dataset as db_get_dataset,
+    increment_dataset_used_in_maps,
+    record_contribution,
+    award_points,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,15 @@ router = APIRouter(prefix="/api", tags=["maps"])
 _ip_requests: Dict[str, List[datetime]] = {}
 RATE_LIMIT_WINDOW = 3600  # 1 hour
 RATE_LIMIT_MAX = 100  # 100 maps per hour for all users
+
+# Tiered rate limits (used by NLP endpoints)
+RATE_LIMIT_MAX_ANONYMOUS = 100
+RATE_LIMIT_MAX_FREE = 200
+RATE_LIMIT_MAX_PRO = 500
+
+# Points for map creation
+POINTS_MAP_CREATE = 5
+POINTS_MAP_WITH_LAYERS = 10
 
 # Maximum retries for ID collision
 MAX_ID_COLLISION_RETRIES = 5
@@ -73,7 +86,12 @@ class MapRequest(BaseModel):
     email: Optional[str] = None
     # Custom layer styling from frontend
     layerStyle: Optional[Dict[str, Any]] = None
-    
+    # Composable layers — reference public datasets by ID
+    layer_ids: Optional[List[str]] = None
+    # Agent attribution
+    agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
+
     model_config = {"extra": "allow"}
     
     @model_validator(mode='before')
@@ -107,14 +125,14 @@ class MapResponse(BaseModel):
 
 # ==================== UTILITIES ====================
 
-def check_rate_limit(ip: str, user_id: int = None) -> bool:
-    """Rate limiting - same generous limit for everyone."""
+def check_rate_limit(ip: str, user_id: int = None, user_plan: str = None) -> bool:
+    """Rate limiting with tiered limits based on plan."""
     now = datetime.now(timezone.utc)
-    
+
     # Use user_id if authenticated, otherwise IP
     key = f"user_{user_id}" if user_id else ip
     requests_dict = _ip_requests
-    
+
     if key in requests_dict:
         requests_dict[key] = [
             t for t in requests_dict[key]
@@ -123,7 +141,15 @@ def check_rate_limit(ip: str, user_id: int = None) -> bool:
     else:
         requests_dict[key] = []
 
-    if len(requests_dict[key]) >= RATE_LIMIT_MAX:
+    # Determine limit based on plan
+    if user_plan == "pro":
+        limit = RATE_LIMIT_MAX_PRO
+    elif user_id:
+        limit = RATE_LIMIT_MAX_FREE
+    else:
+        limit = RATE_LIMIT_MAX_ANONYMOUS
+
+    if len(requests_dict[key]) >= limit:
         return False
 
     requests_dict[key].append(now)
@@ -343,6 +369,26 @@ def generate_delete_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _update_map_agent_fields(map_id: str, agent_id: str = None,
+                             agent_name: str = None, source_dataset_ids: list = None):
+    """Set agent attribution and source dataset IDs on a map row."""
+    from database import get_db, USE_POSTGRES
+    ds_ids_str = json.dumps(source_dataset_ids) if source_dataset_ids else None
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE maps SET agent_id = %s, agent_name = %s, source_dataset_ids = %s
+                    WHERE id = %s
+                """, (agent_id, agent_name, ds_ids_str, map_id))
+        else:
+            conn.execute("""
+                UPDATE maps SET agent_id = ?, agent_name = ?, source_dataset_ids = ?
+                WHERE id = ?
+            """, (agent_id, agent_name, ds_ids_str, map_id))
+
+
 # ==================== ENDPOINTS ====================
 
 class MapCreateResponse(BaseModel):
@@ -399,6 +445,26 @@ async def create_map(
     try:
         geojson = detect_and_normalize_data(body.get_data())
 
+        # Composable layers — merge features from referenced datasets
+        source_dataset_ids = []
+        if body.layer_ids:
+            for layer_id in body.layer_ids:
+                ds = db_get_dataset(layer_id)
+                if ds and ds.get("data"):
+                    ds_data = ds["data"]
+                    if isinstance(ds_data, str):
+                        import json as _json
+                        ds_data = _json.loads(ds_data)
+                    for feature in ds_data.get("features", []):
+                        # Tag features with their source dataset
+                        props = feature.get("properties", {})
+                        props["_source_dataset"] = layer_id
+                        props["_source_dataset_title"] = ds.get("title", "")
+                        feature["properties"] = props
+                        geojson["features"].append(feature)
+                    source_dataset_ids.append(layer_id)
+                    increment_dataset_used_in_maps(layer_id)
+
         bounds = body.bounds
         if bounds == "auto" or bounds is None:
             bounds = calculate_bounds(geojson, body.markers)
@@ -408,7 +474,7 @@ async def create_map(
 
         # Use custom layerStyle if provided, otherwise auto-generate
         style = body.layerStyle if body.layerStyle else auto_style(geojson)
-        
+
         map_config = {
             "geojson": geojson,
             "style": style,
@@ -441,6 +507,31 @@ async def create_map(
             public=True,
             creator_email=creator_email,
         )
+
+        # Update agent attribution and source datasets on the map row
+        if body.agent_id or body.agent_name or source_dataset_ids:
+            _update_map_agent_fields(map_id, body.agent_id, body.agent_name, source_dataset_ids)
+
+        # Record contribution + award points
+        entity_type = "agent" if body.agent_id else "user"
+        entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
+        pts = POINTS_MAP_WITH_LAYERS if source_dataset_ids else POINTS_MAP_CREATE
+
+        record_contribution(
+            action="map_create",
+            resource_type="map",
+            resource_id=map_id,
+            points_awarded=pts,
+            user_id=user_id,
+            user_email=creator_email,
+            agent_id=body.agent_id,
+            agent_name=body.agent_name,
+            metadata={"layer_ids": source_dataset_ids} if source_dataset_ids else None,
+            ip_address=client_ip,
+        )
+
+        award_points(entity_type, entity_id, pts,
+                     field="maps_created", entity_email=creator_email)
 
         base_url = "https://spatix.io"
         map_url = f"{base_url}/m/{map_id}"
