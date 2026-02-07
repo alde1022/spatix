@@ -129,7 +129,7 @@ export default function MapsPage() {
   const map = useRef<maplibregl.Map | null>(null)
   const deckOverlay = useRef<MapboxOverlay | null>(null)
   const [mapReady, setMapReady] = useState(false)
-  const [basemap, setBasemap] = useState<string>("dark")
+  const [basemap, setBasemap] = useState<string>("streets")
   const [layers, setLayers] = useState<Layer[]>([])
   const [activePanel, setActivePanel] = useState<"layers" | "add" | "history" | null>("add")
   const [uploading, setUploading] = useState(false)
@@ -161,6 +161,7 @@ export default function MapsPage() {
   // Data table state
   const [showDataTable, setShowDataTable] = useState(false)
   const [tableLayerId, setTableLayerId] = useState<string | null>(null)
+  const [expandedLayers, setExpandedLayers] = useState<Set<string>>(new Set())
 
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
@@ -707,6 +708,7 @@ export default function MapsPage() {
   const updateLayerRadius = (id: string, radius: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, radius } : l))
   const updateLayerHeight = (id: string, height: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, height } : l))
   const removeLayer = (id: string) => setLayers(prev => prev.filter(l => l.id !== id))
+  const toggleExpand = (id: string) => setExpandedLayers(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
 
   const updateLayerColorBy = (id: string, attribute: string | null) => {
     setLayers(prev => prev.map(l => {
@@ -838,11 +840,14 @@ export default function MapsPage() {
               ) : (
                 layers.map(layer => (
                   <div key={layer.id} className="bg-[#3a4552] rounded-xl overflow-hidden">
-                    {/* Layer header */}
-                    <div className="p-4 flex items-center justify-between">
+                    {/* Layer header - clickable to expand */}
+                    <div 
+                      className="p-3 flex items-center justify-between cursor-pointer hover:bg-[#444c5a] transition-colors"
+                      onClick={() => toggleExpand(layer.id)}
+                    >
                       <div className="flex items-center gap-3 min-w-0">
                         <button
-                          onClick={() => toggleLayer(layer.id)}
+                          onClick={(e) => { e.stopPropagation(); toggleLayer(layer.id) }}
                           className={`w-5 h-5 rounded flex items-center justify-center transition-all flex-shrink-0 ${
                             layer.visible ? "bg-[#6b5ce7]" : "bg-[#242730] border border-[#6a7485]"
                           }`}
@@ -853,22 +858,28 @@ export default function MapsPage() {
                             </svg>
                           )}
                         </button>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-white text-sm font-medium truncate">{layer.name}</p>
-                          <p className="text-[#6a7485] text-xs">{featureCounts(layer)} features</p>
+                          {!expandedLayers.has(layer.id) && (
+                            <p className="text-[#6a7485] text-xs">{featureCounts(layer)} features · {layer.vizType}</p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button onClick={() => fitToLayer(layer)} className="p-2 text-[#6a7485] hover:text-white hover:bg-[#242730] rounded-lg transition-all" title="Zoom to fit">
+                        <button onClick={(e) => { e.stopPropagation(); fitToLayer(layer) }} className="p-1.5 text-[#6a7485] hover:text-white hover:bg-[#242730] rounded-lg transition-all" title="Zoom to fit">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                         </button>
-                        <button onClick={() => removeLayer(layer.id)} className="p-2 text-[#6a7485] hover:text-red-400 hover:bg-[#242730] rounded-lg transition-all" title="Remove">
+                        <button onClick={(e) => { e.stopPropagation(); removeLayer(layer.id) }} className="p-1.5 text-[#6a7485] hover:text-red-400 hover:bg-[#242730] rounded-lg transition-all" title="Remove">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
+                        <svg className={`w-4 h-4 text-[#6a7485] transition-transform ${expandedLayers.has(layer.id) ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
                       </div>
                     </div>
                     
-                    {/* Layer controls */}
+                    {/* Layer controls - collapsible */}
+                    {expandedLayers.has(layer.id) && (
                     <div className="px-4 pb-4 space-y-4">
                       {/* Viz Type */}
                       <div>
@@ -953,6 +964,7 @@ export default function MapsPage() {
                         <input type="range" min="0.1" max="1" step="0.05" value={layer.opacity} onChange={(e) => updateLayerOpacity(layer.id, parseFloat(e.target.value))} className="w-full h-1 bg-[#242730] rounded-lg appearance-none cursor-pointer accent-[#6b5ce7]" />
                       </div>
                     </div>
+                    )}
                   </div>
                 ))
               )}
