@@ -120,6 +120,9 @@ export default function MapsPage() {
   // Error toast state
   const [errorToast, setErrorToast] = useState<string | null>(null)
 
+  // Tooltip state for hover
+  const [tooltip, setTooltip] = useState<{x: number; y: number; properties: Record<string, any>; layerName: string} | null>(null)
+
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
   const [loadingMyMaps, setLoadingMyMaps] = useState(false)
@@ -220,11 +223,24 @@ export default function MapsPage() {
     }
   }
 
+  // Hover handler for deck.gl layers
+  const onLayerHover = useCallback((info: any, layerName: string) => {
+    if (info.object) {
+      // For ScatterplotLayer, data items have {position, properties}
+      // For GeoJsonLayer, data items are GeoJSON features with {properties}
+      // For HexagonLayer, data items are aggregation bins with {points}
+      const props = info.object.properties || {}
+      setTooltip({ x: info.x, y: info.y, properties: props, layerName })
+    } else {
+      setTooltip(null)
+    }
+  }, [])
+
   // Build deck.gl layers
   const deckLayers = useMemo(() => {
     return layers.filter(l => l.visible).flatMap(layer => {
       const features = layer.data?.features || []
-      
+
       // Extract coordinates for point-based layers
       const points = features
         .filter((f: any) => f.geometry?.type === "Point")
@@ -234,6 +250,7 @@ export default function MapsPage() {
         }))
 
       if (layer.vizType === "heatmap" && layer.type === "point") {
+        // HeatmapLayer does not support picking
         return new HeatmapLayer({
           id: `heatmap-${layer.id}`,
           data: points,
@@ -258,6 +275,17 @@ export default function MapsPage() {
           radius: layer.radius || 1000,
           elevationScale: 50,
           extruded: true,
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 60],
+          onHover: (info: any) => {
+            if (info.object) {
+              const count = info.object.points?.length || 0
+              setTooltip({ x: info.x, y: info.y, properties: { "Points in bin": count }, layerName: layer.name })
+            } else {
+              setTooltip(null)
+            }
+          },
           opacity: layer.opacity,
           colorRange: COLOR_PALETTES.uber.map(c => {
             const hex = c.replace('#', '')
@@ -280,6 +308,10 @@ export default function MapsPage() {
           stroked: true,
           lineWidthMinPixels: 1,
           getLineColor: [255, 255, 255],
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 80],
+          onHover: (info: any) => onLayerHover(info, layer.name),
         })
       }
 
@@ -297,12 +329,16 @@ export default function MapsPage() {
           extruded: layer.vizType === "3d",
           getElevation: layer.height || 100,
           opacity: layer.opacity,
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 80],
+          onHover: (info: any) => onLayerHover(info, layer.name),
         })
       }
 
       return []
     })
-  }, [layers])
+  }, [layers, onLayerHover])
 
   // Update deck overlay
   useEffect(() => {
@@ -480,12 +516,18 @@ export default function MapsPage() {
     const lines: any[] = []
     const polygons: any[] = []
 
-    features.forEach((f: any) => {
-      const type = f.geometry?.type
-      if (type === "Point" || type === "MultiPoint") points.push(f)
-      else if (type === "LineString" || type === "MultiLineString") lines.push(f)
-      else if (type === "Polygon" || type === "MultiPolygon") polygons.push(f)
-    })
+    const classify = (f: any, geom: any) => {
+      const type = geom?.type
+      if (type === "Point" || type === "MultiPoint") points.push({ ...f, geometry: geom })
+      else if (type === "LineString" || type === "MultiLineString") lines.push({ ...f, geometry: geom })
+      else if (type === "Polygon" || type === "MultiPolygon") polygons.push({ ...f, geometry: geom })
+      else if (type === "GeometryCollection") {
+        // Flatten GeometryCollection into individual features per geometry
+        geom.geometries?.forEach((g: any) => classify(f, g))
+      }
+    }
+
+    features.forEach((f: any) => classify(f, f.geometry))
 
     const result: { name: string; type: "point" | "line" | "polygon"; data: any }[] = []
     
@@ -942,6 +984,32 @@ export default function MapsPage() {
               </div>
               <p className="text-white font-semibold mb-1">Upload data to get started</p>
               <p className="text-[#6a7485] text-sm">Drop a file on the left panel, or try a sample dataset</p>
+            </div>
+          </div>
+        )}
+        {/* Hover Tooltip */}
+        {tooltip && (
+          <div
+            className="absolute z-20 pointer-events-none"
+            style={{ left: Math.min(tooltip.x + 12, (typeof window !== 'undefined' ? window.innerWidth - 340 - 280 : 400)), top: tooltip.y - 12 }}
+          >
+            <div className="bg-[#1a1e25]/95 backdrop-blur-sm rounded-lg shadow-xl border border-[#3a4552] px-3 py-2.5 max-w-[260px]">
+              <p className="text-[#8b7cf7] text-[10px] font-semibold uppercase tracking-wider mb-1.5">{tooltip.layerName}</p>
+              <div className="space-y-1">
+                {Object.entries(tooltip.properties)
+                  .filter(([, v]) => v != null && v !== '' && v !== undefined)
+                  .slice(0, 12)
+                  .map(([key, value]) => (
+                    <div key={key} className="flex gap-2 text-xs leading-tight">
+                      <span className="text-[#6a7485] shrink-0 truncate max-w-[90px]">{key}</span>
+                      <span className="text-white truncate">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                    </div>
+                  ))
+                }
+                {Object.keys(tooltip.properties).filter(k => tooltip.properties[k] != null && tooltip.properties[k] !== '').length > 12 && (
+                  <p className="text-[#6a7485] text-[10px] mt-1">+ {Object.keys(tooltip.properties).length - 12} more fields</p>
+                )}
+              </div>
             </div>
           </div>
         )}
