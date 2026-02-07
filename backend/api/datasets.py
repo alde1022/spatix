@@ -30,6 +30,7 @@ from database import (
     record_contribution,
     award_points,
     get_dataset_uploader_info,
+    get_user_datasets as db_get_user_datasets,
 )
 from api.contributions import get_points_multiplier
 
@@ -491,6 +492,49 @@ async def list_datasets(
         })
 
     return {"datasets": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/datasets/me")
+async def list_my_datasets(
+    authorization: Optional[str] = Header(None),
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List datasets uploaded by the authenticated user."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        from routers.auth import verify_jwt
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get("sub")
+    user_email = payload.get("email")
+    datasets = db_get_user_datasets(user_id=user_id, email=user_email, limit=limit, offset=offset)
+
+    items = []
+    for ds in datasets:
+        items.append({
+            "id": ds["id"],
+            "title": ds["title"],
+            "description": ds.get("description", ""),
+            "category": ds.get("category", "other"),
+            "tags": ds.get("tags", ""),
+            "feature_count": ds.get("feature_count", 0),
+            "geometry_types": ds.get("geometry_types", ""),
+            "query_count": ds.get("query_count", 0),
+            "used_in_maps": ds.get("used_in_maps", 0),
+            "verified": bool(ds.get("verified", False)),
+            "created_at": str(ds.get("created_at", "")),
+        })
+
+    return {"datasets": items, "total": len(items)}
 
 
 @router.get("/datasets/categories")

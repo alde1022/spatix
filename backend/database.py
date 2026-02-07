@@ -1109,6 +1109,82 @@ def get_user_plan(user_id: int) -> str:
     return row[0] if row else "free"
 
 
+def get_user_datasets(user_id: int = None, email: str = None, limit: int = 50, offset: int = 0) -> list:
+    """Get datasets uploaded by a user (by user_id or email)."""
+    ensure_db_initialized()
+    ph = "%s" if USE_POSTGRES else "?"
+    conditions = []
+    params = []
+    if user_id:
+        conditions.append(f"uploader_id = {ph}")
+        params.append(user_id)
+    if email:
+        conditions.append(f"uploader_email = {ph}")
+        params.append(email)
+    if not conditions:
+        return []
+    where = " OR ".join(conditions)
+    params.extend([limit, offset])
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"""
+                    SELECT id, title, description, category, tags, feature_count,
+                           geometry_types, query_count, used_in_maps, verified,
+                           created_at, updated_at
+                    FROM datasets WHERE ({where})
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                """, params)
+                return [dict(r) for r in cur.fetchall()]
+        else:
+            cur = conn.execute(f"""
+                SELECT id, title, description, category, tags, feature_count,
+                       geometry_types, query_count, used_in_maps, verified,
+                       created_at, updated_at
+                FROM datasets WHERE ({where})
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_user_contributions(user_id: int = None, email: str = None, limit: int = 50, offset: int = 0) -> list:
+    """Get contribution activity for a user."""
+    ensure_db_initialized()
+    ph = "%s" if USE_POSTGRES else "?"
+    conditions = []
+    params = []
+    if user_id:
+        conditions.append(f"user_id = {ph}")
+        params.append(user_id)
+    if email:
+        conditions.append(f"user_email = {ph}")
+        params.append(email)
+    if not conditions:
+        return []
+    where = " OR ".join(conditions)
+    params.extend([limit, offset])
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"""
+                    SELECT action, resource_type, resource_id, points_awarded, created_at
+                    FROM contributions WHERE ({where})
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                """, params)
+                return [dict(r) for r in cur.fetchall()]
+        else:
+            cur = conn.execute(f"""
+                SELECT action, resource_type, resource_id, points_awarded, created_at
+                FROM contributions WHERE ({where})
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
 def get_dataset_uploader_info(dataset_id: str) -> dict:
     """Get uploader info for a dataset to reward them when their data is used.
 

@@ -181,17 +181,28 @@ export default function MapsPage() {
     return () => clearTimeout(t)
   }, [errorToast])
 
+  // Helper to get auth headers if user is logged in
+  const getAuthHeaders = useCallback((): Record<string, string> => {
+    const token = localStorage.getItem("spatix_token")
+    if (token) return { Authorization: `Bearer ${token}` }
+    return {}
+  }, [])
+
   // Fetch my maps when history tab is opened
   const fetchMyMaps = useCallback(async () => {
+    const token = localStorage.getItem("spatix_token")
     const storedEmail = localStorage.getItem("spatix_save_email")
-    if (!storedEmail) {
+    if (!token && !storedEmail) {
       setMyMaps([])
       return
     }
     setLoadingMyMaps(true)
     setMyMapsError(null)
     try {
-      const res = await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail)}`)
+      // Prefer authenticated endpoint if token is available
+      const res = token
+        ? await fetch(`${API_URL}/api/maps/me`, { headers: { Authorization: `Bearer ${token}` } })
+        : await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail!)}`)
       if (res.ok) {
         const data = await res.json()
         setMyMaps(data.maps || [])
@@ -239,7 +250,7 @@ export default function MapsPage() {
 
       const res = await fetch(`${API_URL}/api/map`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           data: mergedGeojson,
           title: mapTitle || "Untitled Map",

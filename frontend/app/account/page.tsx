@@ -14,14 +14,19 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Redirect to the new unified dashboard
+    router.replace('/dashboard')
+  }, [router])
+
+  useEffect(() => {
     const email = localStorage.getItem('spatix_email')
     const token = localStorage.getItem('spatix_token')
-    
+
     if (!email || !token) {
-      router.push('/login?redirect=/account')
+      router.push('/login?redirect=/dashboard')
       return
     }
-    
+
     setUser({ email })
     fetchStats(token)
   }, [router])
