@@ -7,7 +7,7 @@ POST /api/map/from-text - Create map from natural language description
 POST /api/map/from-addresses - Create map from a list of addresses
 POST /api/map/route - Create a map showing a route between points
 """
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
 import re
@@ -19,8 +19,12 @@ from api.maps import (
     generate_delete_token,
     auto_style,
     MapCreateResponse,
+    check_rate_limit,
+    RATE_LIMIT_MAX_ANONYMOUS,
+    RATE_LIMIT_MAX_FREE,
+    RATE_LIMIT_MAX_PRO,
 )
-from database import create_map as db_create_map
+from database import create_map as db_create_map, collect_email
 import hashlib
 
 logger = logging.getLogger(__name__)
@@ -35,6 +39,7 @@ class TextMapRequest(BaseModel):
     text: str = Field(..., description="Natural language description of the map to create")
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
+    email: Optional[str] = Field(default=None, description="Creator email for map history")
 
 
 class AddressMapRequest(BaseModel):
@@ -45,6 +50,7 @@ class AddressMapRequest(BaseModel):
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
     connect_points: bool = Field(default=False, description="Draw lines connecting points in order")
     labels: Optional[List[str]] = Field(default=None, description="Labels for each point (same order as addresses)")
+    email: Optional[str] = Field(default=None, description="Creator email for map history")
 
 
 class RouteMapRequest(BaseModel):
@@ -54,6 +60,7 @@ class RouteMapRequest(BaseModel):
     waypoints: Optional[List[str]] = Field(default=None, description="Intermediate stops")
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
+    email: Optional[str] = Field(default=None, description="Creator email for map history")
 
 
 class TextMapResponse(BaseModel):
@@ -226,11 +233,23 @@ def calculate_bounds_from_points(points: List[Dict[str, Any]]) -> List[List[floa
     ]
 
 
+def _clean_email(email: Optional[str]) -> Optional[str]:
+    """Validate and clean an email address, return None if invalid."""
+    if not email:
+        return None
+    import re as _re
+    cleaned = email.strip().lower()
+    if _re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', cleaned):
+        return cleaned
+    return None
+
+
 # ==================== ENDPOINTS ====================
 
 @router.post("/map/from-text", response_model=TextMapResponse)
 async def create_map_from_text(
     body: TextMapRequest,
+    request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -268,14 +287,25 @@ async def create_map_from_text(
 
     # Get user ID if authenticated
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass
+
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+        )
 
     # Create map
     map_id = generate_map_id()
@@ -294,6 +324,11 @@ async def create_map_from_text(
 
     delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
+    # Collect creator email if provided
+    creator_email = _clean_email(body.email)
+    if creator_email:
+        collect_email(creator_email, source="nlp_from_text")
+
     db_create_map(
         map_id=map_id,
         title=body.title or f"Map: {body.text[:50]}...",
@@ -301,7 +336,8 @@ async def create_map_from_text(
         config=map_config,
         delete_token_hash=delete_token_hash,
         user_id=user_id,
-        public=True
+        public=True,
+        creator_email=creator_email,
     )
 
     base_url = "https://spatix.io"
@@ -320,6 +356,7 @@ async def create_map_from_text(
 @router.post("/map/from-addresses", response_model=MapCreateResponse)
 async def create_map_from_addresses(
     body: AddressMapRequest,
+    request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -361,14 +398,25 @@ async def create_map_from_addresses(
 
     # Get user ID if authenticated
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass
+
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+        )
 
     # Create map
     map_id = generate_map_id()
@@ -393,6 +441,11 @@ async def create_map_from_addresses(
 
     delete_token_hash = hashlib.sha256(delete_token.encode()).hexdigest()
 
+    # Collect creator email if provided
+    creator_email = _clean_email(body.email)
+    if creator_email:
+        collect_email(creator_email, source="nlp_from_addresses")
+
     db_create_map(
         map_id=map_id,
         title=body.title or f"Map with {len(successful)} locations",
@@ -400,7 +453,8 @@ async def create_map_from_addresses(
         config=map_config,
         delete_token_hash=delete_token_hash,
         user_id=user_id,
-        public=True
+        public=True,
+        creator_email=creator_email,
     )
 
     base_url = "https://spatix.io"
@@ -418,6 +472,7 @@ async def create_map_from_addresses(
 @router.post("/map/route", response_model=TextMapResponse)
 async def create_route_map(
     body: RouteMapRequest,
+    request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -470,14 +525,25 @@ async def create_route_map(
 
     # Get user ID if authenticated
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass
+
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit = RATE_LIMIT_MAX_PRO if user_plan == "pro" else (RATE_LIMIT_MAX_FREE if user_id else RATE_LIMIT_MAX_ANONYMOUS)
+    if not check_rate_limit(client_ip, user_id, user_plan):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+        )
 
     # Create map
     map_id = generate_map_id()
@@ -505,6 +571,11 @@ async def create_route_map(
     if body.waypoints:
         title += f" (via {len(body.waypoints)} stops)"
 
+    # Collect creator email if provided
+    creator_email = _clean_email(body.email)
+    if creator_email:
+        collect_email(creator_email, source="nlp_route")
+
     db_create_map(
         map_id=map_id,
         title=title,
@@ -512,7 +583,8 @@ async def create_route_map(
         config=map_config,
         delete_token_hash=delete_token_hash,
         user_id=user_id,
-        public=True
+        public=True,
+        creator_email=creator_email,
     )
 
     base_url = "https://spatix.io"

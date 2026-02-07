@@ -158,6 +158,10 @@ export default function MapsPage() {
   // Cursor coordinate display
   const [cursorCoords, setCursorCoords] = useState<{lng: number; lat: number} | null>(null)
 
+  // Data table state
+  const [showDataTable, setShowDataTable] = useState(false)
+  const [tableLayerId, setTableLayerId] = useState<string | null>(null)
+
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
   const [loadingMyMaps, setLoadingMyMaps] = useState(false)
@@ -740,6 +744,17 @@ export default function MapsPage() {
     URL.revokeObjectURL(url)
   }
 
+  // Data table: auto-select first layer when opened
+  const tableLayer = layers.find(l => l.id === tableLayerId) || layers[0] || null
+  const tableColumns = useMemo(() => {
+    if (!tableLayer?.data?.features?.length) return []
+    const colSet = new Set<string>()
+    tableLayer.data.features.forEach((f: any) => {
+      Object.keys(f.properties || {}).forEach((k: string) => colSet.add(k))
+    })
+    return Array.from(colSet)
+  }, [tableLayer])
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(false)
@@ -1088,13 +1103,27 @@ export default function MapsPage() {
                 </svg>
                 Download GeoJSON
               </button>
+              <button
+                onClick={() => { setShowDataTable(!showDataTable); if (!tableLayerId && layers[0]) setTableLayerId(layers[0].id) }}
+                className={`w-full py-2.5 border font-medium rounded-xl transition-all flex items-center justify-center gap-2 text-sm ${
+                  showDataTable
+                    ? "border-[#6b5ce7] text-[#8b7cf7] bg-[#6b5ce7]/10"
+                    : "border-[#3a4552] text-[#6a7485] hover:text-white hover:bg-[#3a4552]"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Data Table
+              </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Map */}
-      <div className="flex-1 relative">
+      {/* Map + Data Table */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className={`relative ${showDataTable ? 'flex-1 min-h-0' : 'flex-1'}`}>
         <div ref={mapContainer} className="absolute inset-0" />
         {/* First-visit onboarding hint */}
         {layers.length === 0 && mapReady && (
@@ -1201,6 +1230,78 @@ export default function MapsPage() {
         {cursorCoords && (
           <div className="absolute bottom-2 left-2 z-10 bg-[#1a1e25]/80 backdrop-blur-sm rounded-lg px-3 py-1.5 text-[11px] font-mono text-[#6a7485]">
             {cursorCoords.lat.toFixed(6)}, {cursorCoords.lng.toFixed(6)}
+          </div>
+        )}
+        </div>
+
+        {/* Data Table Panel */}
+        {showDataTable && layers.length > 0 && (
+          <div className="h-[280px] bg-[#1a1e25] border-t border-[#3a4552] flex flex-col shrink-0">
+            {/* Table header with layer tabs */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[#3a4552] shrink-0">
+              <div className="flex items-center gap-1 overflow-x-auto min-w-0">
+                {layers.map(layer => (
+                  <button
+                    key={layer.id}
+                    onClick={() => setTableLayerId(layer.id)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-all ${
+                      (tableLayerId === layer.id || (!tableLayerId && layer.id === layers[0]?.id))
+                        ? "bg-[#6b5ce7] text-white"
+                        : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]"
+                    }`}
+                  >
+                    {layer.name}
+                    <span className="ml-1.5 opacity-60">({(layer.data?.features?.length || 0).toLocaleString()})</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowDataTable(false)}
+                className="text-[#6a7485] hover:text-white p-1.5 rounded-lg hover:bg-[#3a4552] transition-colors ml-2 shrink-0"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {/* Table content */}
+            {tableLayer && tableColumns.length > 0 ? (
+              <div className="flex-1 overflow-auto min-h-0">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-[#242730]">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider border-b border-[#3a4552] whitespace-nowrap">#</th>
+                      {tableColumns.map(col => (
+                        <th key={col} className="px-3 py-2 text-left text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider border-b border-[#3a4552] whitespace-nowrap">{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(tableLayer.data?.features || []).map((feature: any, idx: number) => (
+                      <tr
+                        key={idx}
+                        onClick={() => {
+                          const props = feature.properties || {}
+                          setSelectedFeature({ properties: props, layerName: tableLayer.name, geometryType: feature.geometry?.type || tableLayer.type })
+                        }}
+                        className="hover:bg-[#6b5ce7]/10 cursor-pointer border-b border-[#3a4552]/30 transition-colors"
+                      >
+                        <td className="px-3 py-1.5 text-[#6a7485] tabular-nums">{idx + 1}</td>
+                        {tableColumns.map(col => (
+                          <td key={col} className="px-3 py-1.5 text-white max-w-[200px] truncate" title={feature.properties?.[col] != null ? String(feature.properties[col]) : ''}>
+                            {feature.properties?.[col] != null ? (typeof feature.properties[col] === 'object' ? JSON.stringify(feature.properties[col]) : String(feature.properties[col])) : ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center">
+                <p className="text-[#6a7485] text-sm">No attribute data available</p>
+              </div>
+            )}
           </div>
         )}
       </div>
