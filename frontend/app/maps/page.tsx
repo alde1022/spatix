@@ -1147,8 +1147,8 @@ export default function MapsPage() {
           flex-1 alone doesn't work - explicit height must chain from parent.
       */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        <div className={`relative ${showDataTable ? 'flex-1 min-h-0' : 'flex-1'}`}>
-        <div ref={mapContainer} className="absolute inset-0" />
+        <div className={`relative h-full ${showDataTable ? 'flex-1 min-h-0' : 'flex-1'}`}>
+        <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
         {/* First-visit onboarding hint */}
         {layers.length === 0 && mapReady && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
