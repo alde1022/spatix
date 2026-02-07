@@ -106,11 +106,12 @@ def verify_password(password: str, hashed: str) -> bool:
 def generate_token(length: int = 32) -> str:
     return secrets.token_hex(length)
 
-def create_jwt(user_id: int, email: str) -> str:
+def create_jwt(user_id: int, email: str, plan: str = "free") -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "email": email,
+        "plan": plan or "free",
         "iat": now,
         "exp": now + timedelta(hours=JWT_EXPIRY_HOURS)
     }
@@ -348,7 +349,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
     email = req.email.lower().strip()
 
     user = db_execute(
-        "SELECT id, email, password_hash, email_verified, auth_provider FROM users WHERE email = %s",
+        "SELECT id, email, password_hash, email_verified, auth_provider, plan FROM users WHERE email = %s",
         (email,),
         fetch_one=True
     )
@@ -366,7 +367,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
     if not user.get("email_verified"):
         raise HTTPException(403, detail="Please verify your email first")
 
-    token = create_jwt(user["id"], user["email"])
+    token = create_jwt(user["id"], user["email"], user.get("plan", "free"))
 
     # Set HttpOnly cookie for security
     set_auth_cookie(response, token)
@@ -609,7 +610,7 @@ async def google_callback(code: str):
         return RedirectResponse(f"{FRONTEND_URL}/login?error=no_email")
 
     # Find or create user
-    user = db_execute("SELECT id, email, auth_provider FROM users WHERE email = %s", (email,), fetch_one=True)
+    user = db_execute("SELECT id, email, auth_provider, plan FROM users WHERE email = %s", (email,), fetch_one=True)
 
     with get_db() as conn:
         if USE_POSTGRES:
@@ -645,7 +646,7 @@ async def google_callback(code: str):
                         (google_id, user["id"], google_id)
                     )
 
-    token = create_jwt(user["id"], user["email"])
+    token = create_jwt(user["id"], user["email"], user.get("plan", "free"))
 
     # Set auth cookie and redirect (cookie is more secure than URL param)
     response = RedirectResponse(f"{FRONTEND_URL}/auth/callback")
@@ -780,7 +781,7 @@ async def apple_callback(request: Request):
         if not email:
             return RedirectResponse(f"{FRONTEND_URL}/login?error=no_email")
 
-        user = db_execute("SELECT id, email, auth_provider FROM users WHERE email = %s", (email,), fetch_one=True)
+        user = db_execute("SELECT id, email, auth_provider, plan FROM users WHERE email = %s", (email,), fetch_one=True)
 
         with get_db() as conn:
             if USE_POSTGRES:
@@ -815,7 +816,7 @@ async def apple_callback(request: Request):
                             (apple_id, user["id"], apple_id)
                         )
 
-        token = create_jwt(user["id"], user["email"])
+        token = create_jwt(user["id"], user["email"], user.get("plan", "free"))
 
         # Set auth cookie and redirect (cookie is more secure than URL param)
         response = RedirectResponse(f"{FRONTEND_URL}/auth/callback")

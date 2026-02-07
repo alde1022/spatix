@@ -25,10 +25,11 @@ from database import (
     search_datasets as db_search_datasets,
     get_dataset_count,
     increment_dataset_query_count,
+    update_dataset as db_update_dataset,
+    delete_dataset as db_delete_dataset,
     record_contribution,
     award_points,
     get_dataset_uploader_info,
-    get_user_plan,
 )
 from api.contributions import get_points_multiplier
 
@@ -230,15 +231,10 @@ async def create_dataset(
         agent_name=body.agent_name,
     )
 
-    # Record contribution + award points (pro users earn more)
+    # Record contribution + award points (contribution-tier multiplier)
     entity_type = "agent" if body.agent_id else "user"
     entity_id = body.agent_id or (str(user_id) if user_id else (user_email or "anonymous"))
-
-    # Look up plan for multiplier
-    uploader_plan = None
-    if user_id:
-        uploader_plan = get_user_plan(user_id)
-    pts = POINTS_DATASET_UPLOAD * get_points_multiplier(uploader_plan)
+    pts = POINTS_DATASET_UPLOAD * get_points_multiplier(entity_type, entity_id)
 
     record_contribution(
         action="dataset_upload",
@@ -279,6 +275,109 @@ async def get_dataset(dataset_id: str):
     return ds
 
 
+class DatasetUpdateRequest(BaseModel):
+    """Request to update a dataset's metadata."""
+    title: Optional[str] = Field(default=None, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    category: Optional[str] = None
+    tags: Optional[str] = None
+
+
+@router.put("/dataset/{dataset_id}")
+async def update_dataset(
+    dataset_id: str,
+    body: DatasetUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Update a dataset's metadata. Only the uploader can update.
+
+    Requires authentication via Bearer token. The authenticated user must
+    be the original uploader of the dataset.
+    """
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Require authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        from routers.auth import verify_jwt
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user_id = payload.get("sub")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Check ownership: uploader_id must match, or uploader_email must match
+    user_email = payload.get("email")
+    if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
+        raise HTTPException(status_code=403, detail="Not authorized to update this dataset")
+
+    # Validate category if provided
+    if body.category and body.category not in DATASET_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {', '.join(DATASET_CATEGORIES)}")
+
+    updated = db_update_dataset(
+        dataset_id=dataset_id,
+        title=body.title,
+        description=body.description,
+        category=body.category,
+        tags=body.tags,
+    )
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    return {"success": True, "message": "Dataset updated", "id": dataset_id}
+
+
+@router.delete("/dataset/{dataset_id}")
+async def delete_dataset(
+    dataset_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Delete a dataset from the registry. Only the uploader can delete.
+
+    Requires authentication via Bearer token. The authenticated user must
+    be the original uploader of the dataset.
+    """
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Require authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        from routers.auth import verify_jwt
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user_id = payload.get("sub")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Check ownership
+    user_email = payload.get("email")
+    if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this dataset")
+
+    db_delete_dataset(dataset_id)
+    logger.info(f"Dataset deleted: {dataset_id} by user {user_id}")
+
+    return {"success": True, "message": "Dataset deleted", "id": dataset_id}
+
+
 @router.get("/dataset/{dataset_id}/geojson")
 async def get_dataset_geojson(
     dataset_id: str,
@@ -299,8 +398,7 @@ async def get_dataset_geojson(
     try:
         uploader = get_dataset_uploader_info(dataset_id)
         if uploader:
-            uploader_mult = get_points_multiplier(uploader.get("user_plan"))
-            query_pts = POINTS_DATASET_QUERY * uploader_mult
+            query_pts = POINTS_DATASET_QUERY * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
             record_contribution(
                 action="dataset_query",
                 resource_type="dataset",

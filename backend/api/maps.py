@@ -407,11 +407,8 @@ def _check_view_milestones(map_id: str, new_views: int, map_data: dict):
                          or str(map_data.get("user_id") or map_data.get("creator_email") or "anonymous"))
             entity_email = map_data.get("creator_email")
 
-            # Apply plan multiplier for the map creator
-            creator_plan = None
-            if map_data.get("user_id"):
-                creator_plan = get_user_plan(map_data["user_id"])
-            pts = bonus * get_points_multiplier(creator_plan)
+            # Apply contribution-tier multiplier for the map creator
+            pts = bonus * get_points_multiplier(entity_type, entity_id)
 
             record_contribution(
                 action=action,
@@ -508,8 +505,7 @@ async def create_map(
                     # Reward dataset uploader when their data is used
                     uploader = get_dataset_uploader_info(layer_id)
                     if uploader:
-                        uploader_mult = get_points_multiplier(uploader.get("user_plan"))
-                        uploader_pts = POINTS_DATASET_USED_IN_MAP * uploader_mult
+                        uploader_pts = POINTS_DATASET_USED_IN_MAP * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
                         record_contribution(
                             action="dataset_used_in_map",
                             resource_type="dataset",
@@ -570,11 +566,11 @@ async def create_map(
         if body.agent_id or body.agent_name or source_dataset_ids:
             _update_map_agent_fields(map_id, body.agent_id, body.agent_name, source_dataset_ids)
 
-        # Record contribution + award points (pro users earn more)
+        # Record contribution + award points (contribution-tier multiplier)
         entity_type = "agent" if body.agent_id else "user"
         entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
         base_pts = POINTS_MAP_WITH_LAYERS if source_dataset_ids else POINTS_MAP_CREATE
-        pts = base_pts * get_points_multiplier(user_plan)
+        pts = base_pts * get_points_multiplier(entity_type, entity_id)
 
         record_contribution(
             action="map_create",

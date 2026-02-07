@@ -14,7 +14,7 @@ This document tells you what was built, where the code lives, how it connects, a
   seed_datasets.py     ← NEW — run once to populate 10 seed datasets
 
 /mcp-server
-  server.py            ← MODIFIED — 14 tools (was 8), dataset + points tools added
+  server.py            ← MODIFIED — 16 tools (was 8), dataset CRUD + points tools added
   README.md            ← MODIFIED — updated docs
   requirements.txt     ← unchanged
   pyproject.toml       ← unchanged
@@ -52,6 +52,8 @@ Three new columns added via ALTER TABLE:
 |---|---|---|
 | `POST` | `/api/dataset` | Upload a public dataset (earns +50 points) |
 | `GET` | `/api/dataset/{id}` | Get dataset metadata (no data payload) |
+| `PUT` | `/api/dataset/{id}` | Update dataset metadata (owner only, auth required) |
+| `DELETE` | `/api/dataset/{id}` | Delete a dataset (owner only, auth required) |
 | `GET` | `/api/dataset/{id}/geojson` | Get GeoJSON data. Optional `?bbox=w,s,e,n` filter |
 | `GET` | `/api/datasets` | Search datasets. Params: `q`, `category`, `bbox`, `limit`, `offset` |
 | `GET` | `/api/datasets/categories` | List the 10 valid categories |
@@ -117,7 +119,7 @@ _agent_fields() helper returns {"agent_id": ..., "agent_name": ...} dict.
 
 ## Points Schedule
 
-All base points are multiplied by the user's plan: **free = 1x**, **pro = 3x**. Defined in `api/contributions.py` `PLAN_MULTIPLIERS`.
+All base points are multiplied by the contributor's tier (earn more = earn faster): **0-99 pts = 1x**, **100-499 pts = 2x**, **500+ pts = 3x**. Defined in `api/contributions.py` `CONTRIBUTION_TIERS`. This replaces the old plan-based multiplier — growth first, monetization later.
 
 | Action | Base Points | Where tracked |
 |---|---|---|
@@ -151,7 +153,7 @@ These are centroid/point data with properties. They're representative samples �
 
 ### `database.py`
 - `init_db()`: Added CREATE TABLE for datasets, contributions, points_ledger (both PG + SQLite blocks). Added ALTER TABLE for maps.agent_id, agent_name, source_dataset_ids.
-- New functions at bottom: `create_dataset`, `get_dataset`, `dataset_exists`, `search_datasets`, `get_dataset_count`, `increment_dataset_query_count`, `increment_dataset_used_in_maps`, `record_contribution`, `award_points`, `get_leaderboard`, `get_points`, `get_user_plan`, `get_dataset_uploader_info`.
+- New functions at bottom: `create_dataset`, `get_dataset`, `dataset_exists`, `search_datasets`, `get_dataset_count`, `update_dataset`, `delete_dataset`, `increment_dataset_query_count`, `increment_dataset_used_in_maps`, `record_contribution`, `award_points`, `get_leaderboard`, `get_points`, `get_user_plan`, `get_dataset_uploader_info`.
 - `increment_dataset_query_count` / `increment_dataset_used_in_maps`: now also recompute `reputation_score` inline.
 - `increment_map_views`: now returns new view count (for milestone checking).
 
@@ -172,12 +174,17 @@ These are centroid/point data with properties. They're representative samples �
 - Imported `_update_map_agent_fields`, `POINTS_MAP_CREATE`, `get_points_multiplier`, `record_contribution`, `award_points`
 
 ### `api/datasets.py`
-- `create_dataset` endpoint: now applies plan multiplier to upload points
-- `get_dataset_geojson` endpoint: now rewards dataset uploader with +1 point per query (multiplied by uploader's plan)
+- `create_dataset` endpoint: now applies contribution-tier multiplier to upload points
+- `get_dataset_geojson` endpoint: now rewards dataset uploader with +1 point per query (multiplied by uploader's tier)
+- NEW: `PUT /api/dataset/{id}` — update dataset metadata (owner only, auth required)
+- NEW: `DELETE /api/dataset/{id}` — delete dataset (owner only, auth required)
+- Added `DatasetUpdateRequest` model
 
 ### `api/contributions.py`
-- Added `PLAN_MULTIPLIERS` dict and `get_points_multiplier()` helper
-- Platform stats endpoint now returns `plan_multipliers` in response
+- Replaced `PLAN_MULTIPLIERS` with `CONTRIBUTION_TIERS` — earn more = earn faster (not pay-to-earn)
+- `get_points_multiplier()` now takes `(entity_type, entity_id)` and looks up total_points from ledger
+- Tiers: 0-99 pts = 1x, 100-499 = 2x, 500+ = 3x
+- Platform stats endpoint now returns `contribution_tiers` in response
 
 ### `main.py`
 - Imported and registered `datasets_router` and `contributions_router`
@@ -187,8 +194,9 @@ These are centroid/point data with properties. They're representative samples �
 - Added `_agent_fields()` helper
 - `create_map` tool: added `layer_ids` parameter
 - All map creation tools: auto-attach agent fields
-- New tools: `search_datasets`, `get_dataset`, `upload_dataset`, `get_leaderboard`, `get_my_points`
-- New resource: `spatix://points-schedule`
+- New tools: `search_datasets`, `get_dataset`, `upload_dataset`, `update_dataset`, `delete_dataset`, `get_leaderboard`, `get_my_points`
+- New resource: `spatix://points-schedule` (updated with contribution tiers)
+- Updated `get_my_points` text: replaced "pro users earn 3x" with contribution-tier language
 
 ## Known TODOs
 
@@ -196,16 +204,16 @@ These are centroid/point data with properties. They're representative samples �
 
 2. ~~**NLP endpoints don't pass agent attribution**~~ — **DONE.** All 3 NLP endpoints now accept agent_id/agent_name and record contributions + award points.
 
-3. **Seed data is simplified** — Current seed datasets use point centroids. For real boundaries (polygon outlines of countries/states), download full GeoJSON from Natural Earth or Census TIGER and import them. The schema supports up to 100k features per dataset.
+3. ~~**Seed data is simplified**~~ — **DONE.** `seed_datasets.py` now downloads real polygon boundaries from Natural Earth 110m at runtime for `ds_world-countries` and `ds_us-states`. Falls back to centroid points if download fails. Other datasets (airports, cities, landmarks, etc.) remain as points — correctly represented.
 
-4. **No dataset update/delete endpoints** — Only create and read exist. Add `PUT /api/dataset/{id}` and `DELETE /api/dataset/{id}` following the same auth pattern as maps.
+4. ~~**No dataset update/delete endpoints**~~ — **DONE.** `PUT /api/dataset/{id}` and `DELETE /api/dataset/{id}` added with owner-only auth. DB functions `update_dataset()` and `delete_dataset()` added. MCP tools `update_dataset` and `delete_dataset` added.
 
 5. **No dataset versioning** — The `updated_at` column exists but there's no version history. For v2, consider a `dataset_versions` table.
 
 6. ~~**Reputation score not computed**~~ — **DONE.** Reputation is now recomputed inline in `increment_dataset_query_count()` and `increment_dataset_used_in_maps()` using formula: `(query_count * 1) + (used_in_maps * 10) + (verified * 100)`.
 
-7. ~~**View milestones don't trigger points**~~ — **DONE.** `_check_view_milestones()` in api/maps.py awards +10 at 100 views, +50 at 1000 views (with plan multiplier).
+7. ~~**View milestones don't trigger points**~~ — **DONE.** `_check_view_milestones()` in api/maps.py awards +10 at 100 views, +50 at 1000 views (with contribution-tier multiplier).
 
 8. **Publish MCP server to registries** — Get listed on Smithery, MCP Hub, and any other tool discovery platforms.
 
-9. **JWT missing `plan` field** — `create_jwt` in `routers/auth.py` needs to include the user's `plan` in the JWT payload. Currently code falls back to `"free"` when plan is missing from the token.
+9. ~~**JWT missing `plan` field**~~ — **DONE.** `create_jwt` now accepts and includes `plan` in the JWT payload. All auth flows (login, Google OAuth, Apple OAuth) now pass user's plan to `create_jwt`.

@@ -840,6 +840,63 @@ def get_dataset_count(category: str = None) -> int:
             return cur.fetchone()[0]
 
 
+def update_dataset(dataset_id: str, title: str = None, description: str = None,
+                    category: str = None, tags: str = None) -> bool:
+    """Update dataset metadata fields. Returns True if updated."""
+    ensure_db_initialized()
+
+    updates = []
+    params = []
+    ph = "%s" if USE_POSTGRES else "?"
+
+    if title is not None:
+        updates.append(f"title = {ph}")
+        params.append(title)
+    if description is not None:
+        updates.append(f"description = {ph}")
+        params.append(description)
+    if category is not None:
+        updates.append(f"category = {ph}")
+        params.append(category)
+    if tags is not None:
+        updates.append(f"tags = {ph}")
+        params.append(tags)
+
+    if not updates:
+        return False
+
+    if USE_POSTGRES:
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+    else:
+        updates.append(f"updated_at = {ph}")
+        params.append(datetime.now(timezone.utc).isoformat())
+
+    params.append(dataset_id)
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE datasets SET {', '.join(updates)} WHERE id = %s", params)
+                return cur.rowcount > 0
+        else:
+            cur = conn.execute(f"UPDATE datasets SET {', '.join(updates)} WHERE id = ?", params)
+            return cur.rowcount > 0
+
+
+def delete_dataset(dataset_id: str) -> bool:
+    """Delete a dataset by ID. Returns True if deleted."""
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM datasets WHERE id = %s", (dataset_id,))
+                return cur.rowcount > 0
+        else:
+            cur = conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+            return cur.rowcount > 0
+
+
 def increment_dataset_query_count(dataset_id: str) -> None:
     """Increment query count for a dataset and recompute reputation score."""
     ensure_db_initialized()
