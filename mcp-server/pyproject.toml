@@ -1,17 +1,42 @@
 [project]
 name = "spatix-mcp"
 version = "0.1.0"
-description = "MCP server for Spatix — create maps, geocode, and work with spatial data"
+description = "MCP server for Spatix — create maps, geocode, and work with spatial data from any AI agent"
+readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.10"
+authors = [
+    {name = "Spatix", email = "hello@spatix.io"}
+]
+keywords = ["mcp", "model-context-protocol", "gis", "geospatial", "maps", "ai-agents", "geocoding"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0.0",
 ]
 
+[project.urls]
+Homepage = "https://spatix.io"
+Documentation = "https://github.com/alde1022/spatix/tree/main/mcp-server"
+Repository = "https://github.com/alde1022/spatix"
+Issues = "https://github.com/alde1022/spatix/issues"
+
 [project.scripts]
-spatix-mcp = "server:main"
+spatix-mcp = "spatix_mcp:main"
 
 [build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["spatix_mcp"]

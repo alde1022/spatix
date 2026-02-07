@@ -39,6 +39,23 @@ Every map tool returns a **shareable URL** (`spatix.io/m/...`) and **embed code*
 
 ## Install
 
+### Option 1: pip (recommended)
+
+```bash
+pip install spatix-mcp
+```
+
+Then run:
+```bash
+spatix-mcp
+```
+
+### Option 2: uvx (no install needed)
+
+```bash
+uvx spatix-mcp
+```
+
 ### Claude Desktop
 
 Add to `claude_desktop_config.json`:
@@ -47,8 +64,8 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "spatix": {
-      "command": "python",
-      "args": ["/path/to/spatix/mcp-server/server.py"],
+      "command": "spatix-mcp",
+      "args": [],
       "env": {
         "SPATIX_API_URL": "https://api.spatix.io",
         "SPATIX_AGENT_ID": "my-agent-123",
