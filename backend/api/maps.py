@@ -32,7 +32,10 @@ from database import (
     increment_dataset_used_in_maps,
     record_contribution,
     award_points,
+    get_dataset_uploader_info,
+    get_user_plan,
 )
+from api.contributions import get_points_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,7 @@ RATE_LIMIT_MAX_PRO = 500
 # Points for map creation
 POINTS_MAP_CREATE = 5
 POINTS_MAP_WITH_LAYERS = 10
+POINTS_DATASET_USED_IN_MAP = 5
 
 # Maximum retries for ID collision
 MAX_ID_COLLISION_RETRIES = 5
@@ -389,6 +393,40 @@ def _update_map_agent_fields(map_id: str, agent_id: str = None,
             """, (agent_id, agent_name, ds_ids_str, map_id))
 
 
+def _check_view_milestones(map_id: str, new_views: int, map_data: dict):
+    """Award bonus points when a map crosses view milestones (100, 1000)."""
+    milestones = [
+        (100, 10, "map_views_100"),
+        (1000, 50, "map_views_1000"),
+    ]
+    for threshold, bonus, action in milestones:
+        # Trigger only when we just crossed the threshold
+        if new_views >= threshold and (new_views - 1) < threshold:
+            entity_type = "agent" if map_data.get("agent_id") else "user"
+            entity_id = (map_data.get("agent_id")
+                         or str(map_data.get("user_id") or map_data.get("creator_email") or "anonymous"))
+            entity_email = map_data.get("creator_email")
+
+            # Apply plan multiplier for the map creator
+            creator_plan = None
+            if map_data.get("user_id"):
+                creator_plan = get_user_plan(map_data["user_id"])
+            pts = bonus * get_points_multiplier(creator_plan)
+
+            record_contribution(
+                action=action,
+                resource_type="map",
+                resource_id=map_id,
+                points_awarded=pts,
+                user_id=map_data.get("user_id"),
+                user_email=entity_email,
+                agent_id=map_data.get("agent_id"),
+                agent_name=map_data.get("agent_name"),
+            )
+            award_points(entity_type, entity_id, pts,
+                         field="total_map_views", entity_email=entity_email)
+
+
 # ==================== ENDPOINTS ====================
 
 class MapCreateResponse(BaseModel):
@@ -422,12 +460,14 @@ async def create_map(
 
     # Try to get user from auth token (optional - maps can be created anonymously)
     user_id = None
+    user_plan = None
     if authorization and authorization.startswith("Bearer "):
         try:
             from routers.auth import verify_jwt
             token = authorization.split(" ")[1]
             payload = verify_jwt(token)
             user_id = payload.get("sub")
+            user_plan = payload.get("plan", "free")
         except Exception:
             pass  # Anonymous creation is fine
 
@@ -464,6 +504,24 @@ async def create_map(
                         geojson["features"].append(feature)
                     source_dataset_ids.append(layer_id)
                     increment_dataset_used_in_maps(layer_id)
+
+                    # Reward dataset uploader when their data is used
+                    uploader = get_dataset_uploader_info(layer_id)
+                    if uploader:
+                        uploader_mult = get_points_multiplier(uploader.get("user_plan"))
+                        uploader_pts = POINTS_DATASET_USED_IN_MAP * uploader_mult
+                        record_contribution(
+                            action="dataset_used_in_map",
+                            resource_type="dataset",
+                            resource_id=layer_id,
+                            points_awarded=uploader_pts,
+                            agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
+                            user_email=uploader.get("entity_email"),
+                        )
+                        award_points(
+                            uploader["entity_type"], uploader["entity_id"], uploader_pts,
+                            field="data_queries_served", entity_email=uploader.get("entity_email"),
+                        )
 
         bounds = body.bounds
         if bounds == "auto" or bounds is None:
@@ -512,10 +570,11 @@ async def create_map(
         if body.agent_id or body.agent_name or source_dataset_ids:
             _update_map_agent_fields(map_id, body.agent_id, body.agent_name, source_dataset_ids)
 
-        # Record contribution + award points
+        # Record contribution + award points (pro users earn more)
         entity_type = "agent" if body.agent_id else "user"
         entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
-        pts = POINTS_MAP_WITH_LAYERS if source_dataset_ids else POINTS_MAP_CREATE
+        base_pts = POINTS_MAP_WITH_LAYERS if source_dataset_ids else POINTS_MAP_CREATE
+        pts = base_pts * get_points_multiplier(user_plan)
 
         record_contribution(
             action="map_create",
@@ -559,8 +618,12 @@ async def get_map(map_id: str):
     if not map_data:
         raise HTTPException(status_code=404, detail="Map not found")
 
-    # Increment views asynchronously
-    increment_map_views(map_id)
+    # Increment views and check milestones
+    new_views = increment_map_views(map_id)
+    try:
+        _check_view_milestones(map_id, new_views, map_data)
+    except Exception as e:
+        logger.warning(f"View milestone check failed for {map_id}: {e}")
 
     return {
         "id": map_data["id"],
@@ -568,7 +631,7 @@ async def get_map(map_id: str):
         "description": map_data["description"],
         "config": map_data["config"],
         "created_at": map_data["created_at"],
-        "views": map_data["views"] + 1  # Include current view
+        "views": new_views
     }
 
 

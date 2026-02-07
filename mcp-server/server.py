@@ -657,11 +657,14 @@ async def get_my_points() -> str:
     if data.get("member_since"):
         parts.append(f"  Member since: {data['member_since']}")
 
-    parts.append("\nPoints schedule:")
+    parts.append("\nPoints schedule (base, pro users earn 3x):")
     parts.append("  Upload dataset: +50")
     parts.append("  Create map: +5")
     parts.append("  Create map with datasets: +10")
     parts.append("  Your dataset used in a map: +5")
+    parts.append("  Your dataset queried: +1")
+    parts.append("  Map hits 100 views: +10")
+    parts.append("  Map hits 1000 views: +50")
     return "\n".join(parts)
 
 
@@ -711,8 +714,14 @@ async def points_schedule() -> str:
             "map_create_with_layers": {"points": 10, "description": "Create a map using public datasets"},
             "dataset_used_in_map": {"points": 5, "description": "Your dataset is used by someone else"},
             "dataset_query": {"points": 1, "description": "Someone queries your dataset"},
+            "map_views_milestone_100": {"points": 10, "description": "Your map hits 100 views"},
+            "map_views_milestone_1000": {"points": 50, "description": "Your map hits 1000 views"},
         },
-        "note": "Points will be snapshotted for future token distribution. Early contributors earn more.",
+        "plan_multipliers": {
+            "free": 1,
+            "pro": 3,
+        },
+        "note": "Points will be snapshotted for future token distribution. Pro users earn 3x. Early contributors earn more.",
     }, indent=2)
 
 

@@ -34,6 +34,17 @@ POINTS_SCHEDULE = {
     "map_views_milestone_1000": 50,  # Map hits 1000 views
 }
 
+# Plan-based points multipliers — power users earn more
+PLAN_MULTIPLIERS = {
+    "free": 1,
+    "pro": 3,
+}
+
+
+def get_points_multiplier(user_plan: str = None) -> int:
+    """Get the points multiplier for a user's plan. Pro users earn 3x."""
+    return PLAN_MULTIPLIERS.get(user_plan or "free", 1)
+
 
 # ==================== ENDPOINTS ====================
 
@@ -122,4 +133,5 @@ async def platform_stats():
         "total_contributors": len(top),
         "total_points_distributed": total_points,
         "points_schedule": POINTS_SCHEDULE,
+        "plan_multipliers": PLAN_MULTIPLIERS,
     }
