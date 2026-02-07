@@ -1,4 +1,4 @@
-import L from 'leaflet'
+// Types for Spatix map components - MapLibre based
 
 export interface LayerStyle {
   fillColor?: string
@@ -7,8 +7,6 @@ export interface LayerStyle {
   strokeWidth?: number
   strokeOpacity?: number
   pointRadius?: number
-  color?: string
-  weight?: number
 }
 
 export interface Layer {
@@ -16,8 +14,7 @@ export interface Layer {
   name: string
   visible?: boolean
   geojson?: GeoJSON.FeatureCollection
-  features?: L.FeatureGroup
-  style: LayerStyle | L.PathOptions
+  style: LayerStyle
 }
 
 export interface Style {

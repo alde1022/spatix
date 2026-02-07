@@ -1,3 +1,5 @@
+// @deck.gl/mapbox officially supports both Mapbox GL JS and MapLibre GL JS
+// See: https://deck.gl/docs/api-reference/mapbox/mapbox-overlay
 declare module '@deck.gl/mapbox' {
   export class MapboxOverlay {
     constructor(props: any);

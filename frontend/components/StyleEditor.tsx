@@ -1,18 +1,7 @@
 import React, { useState } from 'react';
-import L from 'leaflet';
+import { Style, LayerStyle } from './types';
 
-// Flexible style type that can accept both our Style and Leaflet PathOptions
-type StyleInput = {
-  fillColor?: string;
-  fillOpacity?: number;
-  strokeColor?: string;
-  strokeWidth?: number;
-  strokeOpacity?: number;
-  markerSize?: number;
-  color?: string;
-  weight?: number;
-  opacity?: number;
-} | L.PathOptions;
+type StyleInput = LayerStyle | Style;
 
 type StyleOutput = {
   fillColor: string;
@@ -25,7 +14,7 @@ type StyleOutput = {
 
 type StyleEditorProps = {
   style?: StyleInput;
-  onStyleChange: (style: StyleOutput | L.PathOptions) => void;
+  onStyleChange: (style: StyleOutput) => void;
 };
 
 const defaultStyle: StyleOutput = {
@@ -39,18 +28,17 @@ const defaultStyle: StyleOutput = {
 
 const presetColors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#3388ff'];
 
-// Normalize incoming style to our format
 function normalizeStyle(input?: StyleInput): StyleOutput {
   if (!input) return defaultStyle;
   
   const s = input as any;
   return {
-    fillColor: s.fillColor ?? s.color ?? defaultStyle.fillColor,
-    fillOpacity: s.fillOpacity ?? s.opacity ?? defaultStyle.fillOpacity,
-    strokeColor: s.strokeColor ?? s.color ?? defaultStyle.strokeColor,
-    strokeWidth: s.strokeWidth ?? s.weight ?? defaultStyle.strokeWidth,
-    strokeOpacity: s.strokeOpacity ?? s.opacity ?? defaultStyle.strokeOpacity,
-    markerSize: s.markerSize ?? defaultStyle.markerSize,
+    fillColor: s.fillColor ?? defaultStyle.fillColor,
+    fillOpacity: s.fillOpacity ?? defaultStyle.fillOpacity,
+    strokeColor: s.strokeColor ?? defaultStyle.strokeColor,
+    strokeWidth: s.strokeWidth ?? s.pointRadius ?? defaultStyle.strokeWidth,
+    strokeOpacity: s.strokeOpacity ?? defaultStyle.strokeOpacity,
+    markerSize: s.markerSize ?? s.pointRadius ?? defaultStyle.markerSize,
   };
 }
 
@@ -62,13 +50,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ style: inputStyle, onStyleCha
 
   const handleChange = (updates: Partial<StyleOutput>) => {
     const newStyle = { ...style, ...updates };
-    // Also emit as Leaflet PathOptions for compatibility
-    onStyleChange({
-      ...newStyle,
-      color: newStyle.strokeColor,
-      weight: newStyle.strokeWidth,
-      opacity: newStyle.strokeOpacity,
-    });
+    onStyleChange(newStyle);
   };
 
   return (

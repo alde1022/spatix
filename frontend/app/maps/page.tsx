@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import Link from "next/link"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
+// Note: @deck.gl/mapbox works with both Mapbox GL JS AND MapLibre GL JS (official support)
 import { MapboxOverlay } from "@deck.gl/mapbox"
 import { ScatterplotLayer, ArcLayer, GeoJsonLayer } from "@deck.gl/layers"
 import { HexagonLayer, HeatmapLayer } from "@deck.gl/aggregation-layers"
