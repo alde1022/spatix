@@ -397,7 +397,12 @@ export default function MapsPage() {
   // Update deck overlay
   useEffect(() => {
     if (deckOverlay.current) {
-      deckOverlay.current.setProps({ layers: deckLayers })
+      console.log('[Deck] Updating layers:', deckLayers.length, 'layers')
+      try {
+        deckOverlay.current.setProps({ layers: deckLayers })
+      } catch (e) {
+        console.error('[Deck] Error updating layers:', e)
+      }
     }
   }, [deckLayers])
 
@@ -658,6 +663,8 @@ export default function MapsPage() {
       setLayers(prev => [...prev, ...newLayers])
       setActivePanel("layers")
       
+      // Trigger map resize in case layout changed
+      if (map.current) map.current.resize()
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
       setErrorToast(err instanceof Error ? err.message : "Upload failed")
@@ -692,6 +699,7 @@ export default function MapsPage() {
 
       setLayers(prev => [...prev, ...newLayers])
       setActivePanel("layers")
+      if (map.current) map.current.resize()
       if (newLayers[0]) setTimeout(() => fitToLayer(newLayers[0]), 100)
     } catch (err) {
       setErrorToast("Failed to load sample dataset")
