@@ -466,16 +466,21 @@ def map_exists(map_id: str) -> bool:
             return cur.fetchone() is not None
 
 
-def increment_map_views(map_id: str) -> None:
-    """Increment the view count for a map."""
+def increment_map_views(map_id: str) -> int:
+    """Increment the view count for a map. Returns new view count."""
     ensure_db_initialized()
 
     with get_db() as conn:
         if USE_POSTGRES:
             with conn.cursor() as cur:
-                cur.execute("UPDATE maps SET views = views + 1 WHERE id = %s", (map_id,))
+                cur.execute("UPDATE maps SET views = views + 1 WHERE id = %s RETURNING views", (map_id,))
+                row = cur.fetchone()
+                return row[0] if row else 0
         else:
             conn.execute("UPDATE maps SET views = views + 1 WHERE id = ?", (map_id,))
+            cur = conn.execute("SELECT views FROM maps WHERE id = ?", (map_id,))
+            row = cur.fetchone()
+            return row[0] if row else 0
 
 
 def delete_map(map_id: str) -> bool:
@@ -836,25 +841,49 @@ def get_dataset_count(category: str = None) -> int:
 
 
 def increment_dataset_query_count(dataset_id: str) -> None:
-    """Increment query count for a dataset."""
+    """Increment query count for a dataset and recompute reputation score."""
     ensure_db_initialized()
     with get_db() as conn:
         if USE_POSTGRES:
             with conn.cursor() as cur:
-                cur.execute("UPDATE datasets SET query_count = query_count + 1 WHERE id = %s", (dataset_id,))
+                cur.execute("""
+                    UPDATE datasets SET
+                        query_count = query_count + 1,
+                        reputation_score = (query_count + 1) * 1 + used_in_maps * 10
+                            + CASE WHEN verified THEN 100 ELSE 0 END
+                    WHERE id = %s
+                """, (dataset_id,))
         else:
-            conn.execute("UPDATE datasets SET query_count = query_count + 1 WHERE id = ?", (dataset_id,))
+            conn.execute("""
+                UPDATE datasets SET
+                    query_count = query_count + 1,
+                    reputation_score = (query_count + 1) * 1 + used_in_maps * 10
+                        + CASE WHEN verified THEN 100 ELSE 0 END
+                WHERE id = ?
+            """, (dataset_id,))
 
 
 def increment_dataset_used_in_maps(dataset_id: str) -> None:
-    """Increment the used_in_maps count for a dataset."""
+    """Increment the used_in_maps count for a dataset and recompute reputation score."""
     ensure_db_initialized()
     with get_db() as conn:
         if USE_POSTGRES:
             with conn.cursor() as cur:
-                cur.execute("UPDATE datasets SET used_in_maps = used_in_maps + 1 WHERE id = %s", (dataset_id,))
+                cur.execute("""
+                    UPDATE datasets SET
+                        used_in_maps = used_in_maps + 1,
+                        reputation_score = query_count * 1 + (used_in_maps + 1) * 10
+                            + CASE WHEN verified THEN 100 ELSE 0 END
+                    WHERE id = %s
+                """, (dataset_id,))
         else:
-            conn.execute("UPDATE datasets SET used_in_maps = used_in_maps + 1 WHERE id = ?", (dataset_id,))
+            conn.execute("""
+                UPDATE datasets SET
+                    used_in_maps = used_in_maps + 1,
+                    reputation_score = query_count * 1 + (used_in_maps + 1) * 10
+                        + CASE WHEN verified THEN 100 ELSE 0 END
+                WHERE id = ?
+            """, (dataset_id,))
 
 
 # ==================== CONTRIBUTIONS & POINTS ====================
@@ -1007,3 +1036,64 @@ def get_points(entity_type: str, entity_id: str) -> dict:
             row = cur.fetchone()
 
     return dict(row) if row else None
+
+
+def get_user_plan(user_id: int) -> str:
+    """Get a user's plan. Returns 'free' if not found."""
+    ensure_db_initialized()
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("SELECT plan FROM users WHERE id = %s", (user_id,))
+                row = cur.fetchone()
+        else:
+            cur = conn.execute("SELECT plan FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+    return row[0] if row else "free"
+
+
+def get_dataset_uploader_info(dataset_id: str) -> dict:
+    """Get uploader info for a dataset to reward them when their data is used.
+
+    Returns dict with entity_type, entity_id, entity_email, and optionally user_plan.
+    Returns None if dataset not found or has no uploader info.
+    """
+    ensure_db_initialized()
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT uploader_id, uploader_email, agent_id, agent_name FROM datasets WHERE id = %s",
+                    (dataset_id,))
+                row = cur.fetchone()
+        else:
+            cur = conn.execute(
+                "SELECT uploader_id, uploader_email, agent_id, agent_name FROM datasets WHERE id = ?",
+                (dataset_id,))
+            row = cur.fetchone()
+
+    if not row:
+        return None
+    row = dict(row)
+
+    if row.get("agent_id"):
+        return {
+            "entity_type": "agent",
+            "entity_id": row["agent_id"],
+            "entity_email": row.get("uploader_email"),
+        }
+    elif row.get("uploader_id"):
+        plan = get_user_plan(row["uploader_id"])
+        return {
+            "entity_type": "user",
+            "entity_id": str(row["uploader_id"]),
+            "entity_email": row.get("uploader_email"),
+            "user_plan": plan,
+        }
+    elif row.get("uploader_email"):
+        return {
+            "entity_type": "user",
+            "entity_id": row["uploader_email"],
+            "entity_email": row["uploader_email"],
+        }
+    return None

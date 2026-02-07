@@ -117,13 +117,17 @@ _agent_fields() helper returns {"agent_id": ..., "agent_name": ...} dict.
 
 ## Points Schedule
 
-| Action | Points | Where tracked |
+All base points are multiplied by the user's plan: **free = 1x**, **pro = 3x**. Defined in `api/contributions.py` `PLAN_MULTIPLIERS`.
+
+| Action | Base Points | Where tracked |
 |---|---|---|
 | `dataset_upload` | +50 | `api/datasets.py` create_dataset endpoint |
-| `map_create` | +5 | `api/maps.py` create_map endpoint |
+| `map_create` | +5 | `api/maps.py` create_map + `api/nlp_maps.py` all 3 endpoints |
 | `map_create_with_layers` | +10 | `api/maps.py` create_map endpoint (when layer_ids used) |
-| `dataset_used_in_map` | +5 | Not yet auto-awarded to dataset uploader (see TODO) |
-| `dataset_query` | +1 | Not yet auto-awarded to dataset uploader (see TODO) |
+| `dataset_used_in_map` | +5 | `api/maps.py` layer_ids loop → rewards dataset uploader |
+| `dataset_query` | +1 | `api/datasets.py` geojson endpoint → rewards dataset uploader |
+| `map_views_100` | +10 | `api/maps.py` get_map → `_check_view_milestones()` |
+| `map_views_1000` | +50 | `api/maps.py` get_map → `_check_view_milestones()` |
 
 ## Seed Data
 
@@ -147,16 +151,33 @@ These are centroid/point data with properties. They're representative samples �
 
 ### `database.py`
 - `init_db()`: Added CREATE TABLE for datasets, contributions, points_ledger (both PG + SQLite blocks). Added ALTER TABLE for maps.agent_id, agent_name, source_dataset_ids.
-- New functions at bottom: `create_dataset`, `get_dataset`, `dataset_exists`, `search_datasets`, `get_dataset_count`, `increment_dataset_query_count`, `increment_dataset_used_in_maps`, `record_contribution`, `award_points`, `get_leaderboard`, `get_points`.
+- New functions at bottom: `create_dataset`, `get_dataset`, `dataset_exists`, `search_datasets`, `get_dataset_count`, `increment_dataset_query_count`, `increment_dataset_used_in_maps`, `record_contribution`, `award_points`, `get_leaderboard`, `get_points`, `get_user_plan`, `get_dataset_uploader_info`.
+- `increment_dataset_query_count` / `increment_dataset_used_in_maps`: now also recompute `reputation_score` inline.
+- `increment_map_views`: now returns new view count (for milestone checking).
 
 ### `api/maps.py`
-- Added imports: `get_dataset as db_get_dataset`, `increment_dataset_used_in_maps`, `record_contribution`, `award_points`
+- Added imports: `get_dataset as db_get_dataset`, `increment_dataset_used_in_maps`, `record_contribution`, `award_points`, `get_dataset_uploader_info`, `get_user_plan`, `get_points_multiplier`
 - Added tiered rate limit constants: `RATE_LIMIT_MAX_ANONYMOUS` (100), `RATE_LIMIT_MAX_FREE` (200), `RATE_LIMIT_MAX_PRO` (500)
-- Added `POINTS_MAP_CREATE` (5), `POINTS_MAP_WITH_LAYERS` (10)
+- Added `POINTS_MAP_CREATE` (5), `POINTS_MAP_WITH_LAYERS` (10), `POINTS_DATASET_USED_IN_MAP` (5)
 - `check_rate_limit()` now accepts optional `user_plan` parameter for tiered limiting
 - `MapRequest` model: added `layer_ids`, `agent_id`, `agent_name` fields
-- `create_map` endpoint: added composable layer merging, agent attribution, contribution tracking
+- `create_map` endpoint: added composable layer merging, agent attribution, contribution tracking, plan multiplier, dataset uploader rewards
 - New helper: `_update_map_agent_fields()` — sets agent_id/name/source_dataset_ids on maps row
+- New helper: `_check_view_milestones()` — awards +10 at 100 views, +50 at 1000 views
+- `get_map` endpoint: now calls `_check_view_milestones()` after incrementing views
+
+### `api/nlp_maps.py`
+- Added `agent_id`, `agent_name` fields to `TextMapRequest`, `AddressMapRequest`, `RouteMapRequest`
+- All 3 endpoints now: record contributions, award points (with plan multiplier), set agent attribution
+- Imported `_update_map_agent_fields`, `POINTS_MAP_CREATE`, `get_points_multiplier`, `record_contribution`, `award_points`
+
+### `api/datasets.py`
+- `create_dataset` endpoint: now applies plan multiplier to upload points
+- `get_dataset_geojson` endpoint: now rewards dataset uploader with +1 point per query (multiplied by uploader's plan)
+
+### `api/contributions.py`
+- Added `PLAN_MULTIPLIERS` dict and `get_points_multiplier()` helper
+- Platform stats endpoint now returns `plan_multipliers` in response
 
 ### `main.py`
 - Imported and registered `datasets_router` and `contributions_router`
@@ -171,9 +192,9 @@ These are centroid/point data with properties. They're representative samples �
 
 ## Known TODOs
 
-1. **Dataset uploader rewards not yet automatic** — When dataset X is used in a map or queried, points are awarded to the map creator but NOT yet propagated back to dataset X's uploader. Need to look up the uploader's entity_type/id from the datasets table and call `award_points()` for them too. Do this in `api/maps.py` inside the layer_ids loop, and in `api/datasets.py` in the geojson endpoint.
+1. ~~**Dataset uploader rewards not yet automatic**~~ — **DONE.** Uploaders are now rewarded when their data is used in maps (api/maps.py layer_ids loop) or queried (api/datasets.py geojson endpoint).
 
-2. **NLP endpoints don't pass agent attribution** — `api/nlp_maps.py` endpoints (from-text, from-addresses, route) accept `email` but not `agent_id`/`agent_name`. Add these fields to `TextMapRequest`, `AddressMapRequest`, `RouteMapRequest` and thread them through to `db_create_map` + contribution recording.
+2. ~~**NLP endpoints don't pass agent attribution**~~ — **DONE.** All 3 NLP endpoints now accept agent_id/agent_name and record contributions + award points.
 
 3. **Seed data is simplified** — Current seed datasets use point centroids. For real boundaries (polygon outlines of countries/states), download full GeoJSON from Natural Earth or Census TIGER and import them. The schema supports up to 100k features per dataset.
 
@@ -181,8 +202,10 @@ These are centroid/point data with properties. They're representative samples �
 
 5. **No dataset versioning** — The `updated_at` column exists but there's no version history. For v2, consider a `dataset_versions` table.
 
-6. **Reputation score not computed** — `datasets.reputation_score` is always 0. Compute it from a formula like: `(query_count * 1) + (used_in_maps * 10) + (verified * 100)`. Run this as a periodic job or compute on write.
+6. ~~**Reputation score not computed**~~ — **DONE.** Reputation is now recomputed inline in `increment_dataset_query_count()` and `increment_dataset_used_in_maps()` using formula: `(query_count * 1) + (used_in_maps * 10) + (verified * 100)`.
 
-7. **View milestones don't trigger points** — The points schedule includes +10 at 100 views and +50 at 1000 views, but `increment_map_views()` in `database.py` doesn't check thresholds. Add a check after incrementing.
+7. ~~**View milestones don't trigger points**~~ — **DONE.** `_check_view_milestones()` in api/maps.py awards +10 at 100 views, +50 at 1000 views (with plan multiplier).
 
 8. **Publish MCP server to registries** — Get listed on Smithery, MCP Hub, and any other tool discovery platforms.
+
+9. **JWT missing `plan` field** — `create_jwt` in `routers/auth.py` needs to include the user's `plan` in the JWT payload. Currently code falls back to `"free"` when plan is missing from the token.

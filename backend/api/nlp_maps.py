@@ -20,11 +20,14 @@ from api.maps import (
     auto_style,
     MapCreateResponse,
     check_rate_limit,
+    _update_map_agent_fields,
     RATE_LIMIT_MAX_ANONYMOUS,
     RATE_LIMIT_MAX_FREE,
     RATE_LIMIT_MAX_PRO,
+    POINTS_MAP_CREATE,
 )
-from database import create_map as db_create_map, collect_email
+from api.contributions import get_points_multiplier
+from database import create_map as db_create_map, collect_email, record_contribution, award_points
 import hashlib
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,8 @@ class TextMapRequest(BaseModel):
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
     email: Optional[str] = Field(default=None, description="Creator email for map history")
+    agent_id: Optional[str] = Field(default=None, description="Agent ID for attribution & points")
+    agent_name: Optional[str] = Field(default=None, description="Agent display name")
 
 
 class AddressMapRequest(BaseModel):
@@ -51,6 +56,8 @@ class AddressMapRequest(BaseModel):
     connect_points: bool = Field(default=False, description="Draw lines connecting points in order")
     labels: Optional[List[str]] = Field(default=None, description="Labels for each point (same order as addresses)")
     email: Optional[str] = Field(default=None, description="Creator email for map history")
+    agent_id: Optional[str] = Field(default=None, description="Agent ID for attribution & points")
+    agent_name: Optional[str] = Field(default=None, description="Agent display name")
 
 
 class RouteMapRequest(BaseModel):
@@ -61,6 +68,8 @@ class RouteMapRequest(BaseModel):
     title: Optional[str] = None
     style: Literal["auto", "light", "dark", "satellite"] = "auto"
     email: Optional[str] = Field(default=None, description="Creator email for map history")
+    agent_id: Optional[str] = Field(default=None, description="Agent ID for attribution & points")
+    agent_name: Optional[str] = Field(default=None, description="Agent display name")
 
 
 class TextMapResponse(BaseModel):
@@ -340,6 +349,30 @@ async def create_map_from_text(
         creator_email=creator_email,
     )
 
+    # Agent attribution
+    if body.agent_id or body.agent_name:
+        _update_map_agent_fields(map_id, body.agent_id, body.agent_name)
+
+    # Record contribution + award points
+    entity_type = "agent" if body.agent_id else "user"
+    entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
+    pts = POINTS_MAP_CREATE * get_points_multiplier(user_plan)
+
+    record_contribution(
+        action="map_create",
+        resource_type="map",
+        resource_id=map_id,
+        points_awarded=pts,
+        user_id=user_id,
+        user_email=creator_email,
+        agent_id=body.agent_id,
+        agent_name=body.agent_name,
+        metadata={"source": "from_text", "locations_found": len(successful)},
+        ip_address=client_ip,
+    )
+    award_points(entity_type, entity_id, pts,
+                 field="maps_created", entity_email=creator_email)
+
     base_url = "https://spatix.io"
 
     return TextMapResponse(
@@ -456,6 +489,30 @@ async def create_map_from_addresses(
         public=True,
         creator_email=creator_email,
     )
+
+    # Agent attribution
+    if body.agent_id or body.agent_name:
+        _update_map_agent_fields(map_id, body.agent_id, body.agent_name)
+
+    # Record contribution + award points
+    entity_type = "agent" if body.agent_id else "user"
+    entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
+    pts = POINTS_MAP_CREATE * get_points_multiplier(user_plan)
+
+    record_contribution(
+        action="map_create",
+        resource_type="map",
+        resource_id=map_id,
+        points_awarded=pts,
+        user_id=user_id,
+        user_email=creator_email,
+        agent_id=body.agent_id,
+        agent_name=body.agent_name,
+        metadata={"source": "from_addresses", "address_count": len(body.addresses)},
+        ip_address=client_ip,
+    )
+    award_points(entity_type, entity_id, pts,
+                 field="maps_created", entity_email=creator_email)
 
     base_url = "https://spatix.io"
 
@@ -586,6 +643,31 @@ async def create_route_map(
         public=True,
         creator_email=creator_email,
     )
+
+    # Agent attribution
+    if body.agent_id or body.agent_name:
+        _update_map_agent_fields(map_id, body.agent_id, body.agent_name)
+
+    # Record contribution + award points
+    entity_type = "agent" if body.agent_id else "user"
+    entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
+    pts = POINTS_MAP_CREATE * get_points_multiplier(user_plan)
+
+    record_contribution(
+        action="map_create",
+        resource_type="map",
+        resource_id=map_id,
+        points_awarded=pts,
+        user_id=user_id,
+        user_email=creator_email,
+        agent_id=body.agent_id,
+        agent_name=body.agent_name,
+        metadata={"source": "route", "stops": len(successful),
+                  "distance_km": round(total_distance / 1000, 2)},
+        ip_address=client_ip,
+    )
+    award_points(entity_type, entity_id, pts,
+                 field="maps_created", entity_email=creator_email)
 
     base_url = "https://spatix.io"
 
