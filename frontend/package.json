@@ -24,7 +24,10 @@
     "react-dropzone": "^14.2.3",
     "lucide-react": "^0.300.0",
     "react-beautiful-dnd": "^13.1.1",
-    "@types/react-beautiful-dnd": "^13.1.8"
+    "@types/react-beautiful-dnd": "^13.1.8",
+    "@luma.gl/shadertools": "^9.2.6",
+    "@luma.gl/engine": "^9.2.6",
+    "@luma.gl/webgl": "^9.2.6"
   },
   "devDependencies": {
     "@types/mapbox__mapbox-gl-draw": "^1.4.6",
