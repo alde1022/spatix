@@ -9,6 +9,10 @@ export const metadata: Metadata = {
   description: "Drop any file → instant beautiful map → style → share. The easiest way to create and share maps.",
   keywords: ["maps", "GIS", "geojson", "mapping", "visualization", "data visualization"],
   authors: [{ name: "Spatix" }],
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-icon.svg",
+  },
   openGraph: {
     title: "Spatix - Maps in seconds",
     description: "Drop any file → instant beautiful map → style → share",
