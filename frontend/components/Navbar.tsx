@@ -74,14 +74,14 @@ export default function Navbar() {
                     <p className="text-sm font-medium text-slate-900 truncate">{user.email}</p>
                   </div>
                   <Link
-                    href="/account"
+                    href="/dashboard"
                     onClick={() => setShowMenu(false)}
                     className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
-                    My Account
+                    Dashboard
                   </Link>
                   <Link
-                    href="/account/maps"
+                    href="/dashboard?tab=maps"
                     onClick={() => setShowMenu(false)}
                     className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >

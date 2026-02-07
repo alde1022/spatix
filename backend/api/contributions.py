@@ -10,10 +10,12 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 import logging
 
+from fastapi import Header
 from database import (
     get_leaderboard as db_get_leaderboard,
     get_points as db_get_points,
     get_dataset_count,
+    get_user_contributions as db_get_user_contributions,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,55 @@ async def get_points(entity_type: str, entity_id: str):
         "data_queries_served": points.get("data_queries_served", 0),
         "total_map_views": points.get("total_map_views", 0),
         "member_since": str(points.get("created_at", "")),
+    }
+
+
+@router.get("/contributions/me")
+async def get_my_contributions(
+    authorization: Optional[str] = Header(None),
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Get contribution activity for the authenticated user."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        from routers.auth import verify_jwt
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get("sub")
+    user_email = payload.get("email")
+    contributions = db_get_user_contributions(user_id=user_id, email=user_email, limit=limit, offset=offset)
+
+    # Also get points summary
+    points = db_get_points("user", str(user_id)) if user_id else None
+
+    return {
+        "contributions": [
+            {
+                "action": c["action"],
+                "resource_type": c.get("resource_type"),
+                "resource_id": c.get("resource_id"),
+                "points_awarded": c.get("points_awarded", 0),
+                "created_at": str(c.get("created_at", "")),
+            }
+            for c in contributions
+        ],
+        "points": {
+            "total_points": points.get("total_points", 0) if points else 0,
+            "datasets_uploaded": points.get("datasets_uploaded", 0) if points else 0,
+            "maps_created": points.get("maps_created", 0) if points else 0,
+            "data_queries_served": points.get("data_queries_served", 0) if points else 0,
+            "total_map_views": points.get("total_map_views", 0) if points else 0,
+        },
+        "total": len(contributions),
     }
 
 
