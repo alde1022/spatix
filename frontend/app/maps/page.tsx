@@ -638,36 +638,30 @@ export default function MapsPage() {
     } catch (e) {}
   }
 
-  // Detect a categorical column suitable for splitting into layers
+  // Detect a categorical column suitable for splitting into layers.
+  // Only matches columns with explicitly category-like names to avoid
+  // false positives on generic string columns (name, city, address, etc.).
   const detectCategoryColumn = (features: any[]): string | null => {
-    if (features.length < 2) return null
-    const candidateNames = ["type", "category", "group", "layer", "class", "kind", "status", "classification", "zone", "label", "sector", "region"]
+    if (features.length < 4) return null
+    const candidateNames = ["category", "group", "layer", "class", "kind", "classification"]
     const allKeys = new Set<string>()
     features.slice(0, 50).forEach((f: any) => {
       Object.keys(f.properties || {}).forEach(k => allKeys.add(k))
     })
 
-    // First pass: check for columns with common category-like names
     for (const name of candidateNames) {
-      const match = Array.from(allKeys).find(k => k.toLowerCase() === name || k.toLowerCase() === `${name}_name`)
+      const match = Array.from(allKeys).find(k =>
+        k.toLowerCase() === name ||
+        k.toLowerCase() === `${name}_name` ||
+        k.toLowerCase() === `poi_${name}`
+      )
       if (match) {
         const values = features.map((f: any) => f.properties?.[match]).filter((v: any) => v != null && v !== "")
         const unique = new Set(values.map(String))
-        if (unique.size >= 2 && unique.size <= 10 && unique.size < features.length * 0.5) {
+        // Need at least 2 categories, at most 10, and categories should repeat (not all unique)
+        if (unique.size >= 2 && unique.size <= 10 && unique.size < features.length * 0.4) {
           return match
         }
-      }
-    }
-
-    // Second pass: find any string column with 2-8 unique values (good layer split)
-    for (const key of Array.from(allKeys)) {
-      const values = features.slice(0, 200).map((f: any) => f.properties?.[key]).filter((v: any) => v != null && v !== "")
-      if (values.length === 0) continue
-      const stringVals = values.filter((v: any) => typeof v === "string")
-      if (stringVals.length / values.length < 0.8) continue
-      const unique = new Set(stringVals)
-      if (unique.size >= 2 && unique.size <= 8 && unique.size < values.length * 0.5) {
-        return key
       }
     }
 
