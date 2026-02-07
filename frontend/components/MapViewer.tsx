@@ -1,8 +1,8 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import L from "leaflet"
-import "leaflet/dist/leaflet.css"
+import maplibregl from "maplibre-gl"
+import "maplibre-gl/dist/maplibre-gl.css"
 
 interface MapConfig {
   geojson: GeoJSON.FeatureCollection
@@ -32,157 +32,164 @@ interface MapViewerProps {
   isEmbed?: boolean
 }
 
-// Tile layer URLs
-const TILE_LAYERS = {
-  light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-  satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+const BASEMAPS = {
+  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+  streets: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+  satellite: {
+    version: 8,
+    sources: {
+      satellite: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+      },
+    },
+    layers: [{ id: "satellite", type: "raster", source: "satellite" }],
+  },
 }
 
-const TILE_ATTRIBUTION = {
-  light: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  dark: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  satellite: "&copy; Esri",
+function parseColor(color: string, opacity: number = 1): string {
+  if (color.startsWith("rgb(")) {
+    const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    if (match) return \`rgba(\${match[1]}, \${match[2]}, \${match[3]}, \${opacity})\`
+  }
+  if (color.startsWith("#")) {
+    const hex = color.slice(1)
+    const r = parseInt(hex.slice(0, 2), 16)
+    const g = parseInt(hex.slice(2, 4), 16)
+    const b = parseInt(hex.slice(4, 6), 16)
+    return \`rgba(\${r}, \${g}, \${b}, \${opacity})\`
+  }
+  return color
 }
 
 export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
-  const mapRef = useRef<L.Map | null>(null)
+  const mapRef = useRef<maplibregl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
-    // Initialize map
-    const map = L.map(containerRef.current, {
-      zoomControl: !isEmbed,
-      attributionControl: true,
-    })
-    mapRef.current = map
-
-    // Add tile layer
     const mapStyle = config.mapStyle || "light"
-    L.tileLayer(TILE_LAYERS[mapStyle], {
-      attribution: TILE_ATTRIBUTION[mapStyle],
-      maxZoom: 19,
-    }).addTo(map)
+    const style = BASEMAPS[mapStyle as keyof typeof BASEMAPS] || BASEMAPS.light
 
-    // Add GeoJSON layer
-    if (config.geojson && config.geojson.features?.length > 0) {
-      const geoJsonLayer = L.geoJSON(config.geojson, {
-        style: () => ({
-          fillColor: config.style?.fillColor || "#3b82f6",
-          fillOpacity: config.style?.fillOpacity ?? 0.3,
-          color: config.style?.strokeColor || "#1d4ed8",
-          weight: config.style?.strokeWidth || 2,
-          opacity: config.style?.strokeOpacity ?? 0.8,
-        }),
-        pointToLayer: (feature, latlng) => {
-          return L.circleMarker(latlng, {
-            radius: config.style?.pointRadius || 8,
-            fillColor: config.style?.fillColor || "#3b82f6",
-            fillOpacity: config.style?.fillOpacity ?? 0.8,
-            color: config.style?.strokeColor || "#1d4ed8",
-            weight: config.style?.strokeWidth || 2,
-            opacity: config.style?.strokeOpacity ?? 1,
-          })
-        },
-        onEachFeature: (feature, layer) => {
-          // Add popup with properties
-          if (feature.properties && Object.keys(feature.properties).length > 0) {
-            const props = feature.properties
-            const content = Object.entries(props)
-              .filter(([_, v]) => v !== null && v !== undefined)
-              .map(([k, v]) => `<strong>${k}:</strong> ${v}`)
-              .join("<br>")
-            if (content) {
-              layer.bindPopup(content)
-            }
-          }
-        },
-      }).addTo(map)
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: style as any,
+      center: [0, 20],
+      zoom: 2,
+      attributionControl: !isEmbed,
+    })
 
-      // Fit to GeoJSON bounds
-      const bounds = geoJsonLayer.getBounds()
-      if (bounds.isValid()) {
-        map.fitBounds(bounds, { padding: [50, 50] })
-      }
+    if (!isEmbed) {
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
     }
 
-    // Add markers
-    if (config.markers && config.markers.length > 0) {
-      const markerBounds: L.LatLngExpression[] = []
+    map.on("load", () => {
+      if (config.geojson && config.geojson.features?.length > 0) {
+        map.addSource("data", { type: "geojson", data: config.geojson })
 
-      config.markers.forEach((marker) => {
-        const markerIcon = L.divIcon({
-          className: "custom-marker",
-          html: `
-            <div style="
-              background: ${marker.color || "#ef4444"};
-              width: 24px;
-              height: 24px;
-              border-radius: 50% 50% 50% 0;
-              transform: rotate(-45deg);
-              border: 2px solid white;
-              box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-            "></div>
-          `,
-          iconSize: [24, 24],
-          iconAnchor: [12, 24],
-          popupAnchor: [0, -24],
+        const fillColor = config.style?.fillColor || "#3b82f6"
+        const strokeColor = config.style?.strokeColor || "#1d4ed8"
+        const fillOpacity = config.style?.fillOpacity ?? 0.3
+        const strokeOpacity = config.style?.strokeOpacity ?? 0.8
+        const strokeWidth = config.style?.strokeWidth || 2
+
+        // Points - scale smoothly with zoom
+        map.addLayer({
+          id: "data-points",
+          type: "circle",
+          source: "data",
+          filter: ["==", ["geometry-type"], "Point"],
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2, 5, 4, 10, 6, 15, 10],
+            "circle-color": parseColor(fillColor, 1),
+            "circle-opacity": Math.min(fillOpacity + 0.3, 1),
+            "circle-stroke-color": parseColor(strokeColor, 1),
+            "circle-stroke-width": 1,
+            "circle-stroke-opacity": strokeOpacity,
+          },
         })
 
-        const m = L.marker([marker.lat, marker.lng], { icon: markerIcon }).addTo(map)
+        // Lines
+        map.addLayer({
+          id: "data-lines",
+          type: "line",
+          source: "data",
+          filter: ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]],
+          paint: {
+            "line-color": parseColor(strokeColor, 1),
+            "line-width": strokeWidth,
+            "line-opacity": strokeOpacity,
+          },
+        })
 
-        if (marker.label) {
-          m.bindPopup(`<strong>${marker.label}</strong>`)
-          m.bindTooltip(marker.label, {
-            permanent: false,
-            direction: "top",
-            offset: [0, -20],
-          })
-        }
+        // Polygon fills
+        map.addLayer({
+          id: "data-fill",
+          type: "fill",
+          source: "data",
+          filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+          paint: {
+            "fill-color": parseColor(fillColor, 1),
+            "fill-opacity": fillOpacity,
+          },
+        })
 
-        markerBounds.push([marker.lat, marker.lng])
+        // Polygon outlines
+        map.addLayer({
+          id: "data-outline",
+          type: "line",
+          source: "data",
+          filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+          paint: {
+            "line-color": parseColor(strokeColor, 1),
+            "line-width": strokeWidth,
+            "line-opacity": strokeOpacity,
+          },
+        })
+
+        // Fit bounds
+        const bounds = new maplibregl.LngLatBounds()
+        config.geojson.features.forEach((f: any) => {
+          const add = (c: any) => {
+            if (typeof c[0] === "number") bounds.extend(c as [number, number])
+            else c.forEach(add)
+          }
+          if (f.geometry?.coordinates) add(f.geometry.coordinates)
+        })
+        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
+
+        // Popups on click
+        map.on("click", "data-points", (e) => {
+          if (!e.features?.[0]) return
+          const props = e.features[0].properties || {}
+          const html = Object.entries(props)
+            .filter(([k, v]) => v != null && !k.startsWith("_"))
+            .map(([k, v]) => \`<strong>\${k}:</strong> \${v}\`)
+            .join("<br>")
+          if (html) new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map)
+        })
+        map.on("mouseenter", "data-points", () => { map.getCanvas().style.cursor = "pointer" })
+        map.on("mouseleave", "data-points", () => { map.getCanvas().style.cursor = "" })
+      }
+
+      // Markers
+      config.markers?.forEach((m) => {
+        const el = document.createElement("div")
+        el.style.cssText = \`width:20px;height:20px;background:\${m.color||"#ef4444"};border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.3);cursor:pointer;\`
+        const marker = new maplibregl.Marker({ element: el }).setLngLat([m.lng, m.lat]).addTo(map)
+        if (m.label) marker.setPopup(new maplibregl.Popup().setHTML(\`<strong>\${m.label}</strong>\`))
       })
 
-      // If no GeoJSON, fit to markers
-      if (!config.geojson?.features?.length && markerBounds.length > 0) {
-        if (markerBounds.length === 1) {
-          map.setView(markerBounds[0] as L.LatLngExpression, 13)
-        } else {
-          map.fitBounds(markerBounds as L.LatLngBoundsExpression, { padding: [50, 50] })
-        }
-      }
-    }
+      if (config.bounds?.length === 2) map.fitBounds(config.bounds as any, { padding: 50 })
+      if (config.center && config.zoom) { map.setCenter(config.center); map.setZoom(config.zoom) }
+    })
 
-    // Override with explicit center/zoom if provided
-    if (config.center) {
-      map.setView([config.center[1], config.center[0]], config.zoom || 10)
-    }
-
-    // Use explicit bounds if not auto
-    if (config.bounds && Array.isArray(config.bounds) && config.bounds.length === 2) {
-      const [[swLng, swLat], [neLng, neLat]] = config.bounds
-      map.fitBounds([
-        [swLat, swLng],
-        [neLat, neLng],
-      ])
-    }
-
-    // Cleanup
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove()
-        mapRef.current = null
-      }
-    }
+    mapRef.current = map
+    return () => { mapRef.current?.remove(); mapRef.current = null }
   }, [config, isEmbed])
 
-  return (
-    <div
-      ref={containerRef}
-      className="w-full h-full"
-      style={{ minHeight: isEmbed ? "100%" : "calc(100vh - 64px)" }}
-    />
-  )
+  return <div ref={containerRef} className="w-full h-full" style={{ minHeight: isEmbed ? "100%" : "calc(100vh - 64px)" }} />
 }
