@@ -52,14 +52,14 @@ const BASEMAPS = {
 function parseColor(color: string, opacity: number = 1): string {
   if (color.startsWith("rgb(")) {
     const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-    if (match) return \`rgba(\${match[1]}, \${match[2]}, \${match[3]}, \${opacity})\`
+    if (match) return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${opacity})`
   }
   if (color.startsWith("#")) {
     const hex = color.slice(1)
     const r = parseInt(hex.slice(0, 2), 16)
     const g = parseInt(hex.slice(2, 4), 16)
     const b = parseInt(hex.slice(4, 6), 16)
-    return \`rgba(\${r}, \${g}, \${b}, \${opacity})\`
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`
   }
   return color
 }
@@ -167,7 +167,7 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
           const props = e.features[0].properties || {}
           const html = Object.entries(props)
             .filter(([k, v]) => v != null && !k.startsWith("_"))
-            .map(([k, v]) => \`<strong>\${k}:</strong> \${v}\`)
+            .map(([k, v]) => `<strong>${k}:</strong> ${v}`)
             .join("<br>")
           if (html) new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map)
         })
@@ -178,9 +178,9 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
       // Markers
       config.markers?.forEach((m) => {
         const el = document.createElement("div")
-        el.style.cssText = \`width:20px;height:20px;background:\${m.color||"#ef4444"};border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.3);cursor:pointer;\`
+        el.style.cssText = `width:20px;height:20px;background:${m.color||"#ef4444"};border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.3);cursor:pointer;`
         const marker = new maplibregl.Marker({ element: el }).setLngLat([m.lng, m.lat]).addTo(map)
-        if (m.label) marker.setPopup(new maplibregl.Popup().setHTML(\`<strong>\${m.label}</strong>\`))
+        if (m.label) marker.setPopup(new maplibregl.Popup().setHTML(`<strong>${m.label}</strong>`))
       })
 
       if (config.bounds?.length === 2) map.fitBounds(config.bounds as any, { padding: 50 })
