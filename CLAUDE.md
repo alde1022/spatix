@@ -1,7 +1,7 @@
 # Spatix — Developer Handoff
 
 ## What is Spatix?
-An AI-native mapping platform. Users upload spatial data (GeoJSON, Shapefile, KML, CSV, GPX) or describe locations in natural language, and get an interactive, shareable map in seconds. Competes with Felt, ArcGIS Online, and Kepler.gl.
+An AI-native mapping platform. Users upload spatial data (GeoJSON, Shapefile, KML, CSV, GPX) or describe locations in natural language, and get an interactive, shareable map in seconds. The fastest way to go from data to shareable map.
 
 ## Architecture
 

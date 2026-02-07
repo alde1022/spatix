@@ -126,8 +126,8 @@ export default function PrivacyPage() {
           <h2>Contact</h2>
           <p>
             Privacy questions? Contact us at{" "}
-            <a href="mailto:privacy@spatix.io" className="text-indigo-600 hover:underline">
-              privacy@spatix.io
+            <a href="https://spatix.io" className="text-indigo-600 hover:underline">
+              the contact form on our homepage
             </a>
           </p>
         </div>

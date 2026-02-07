@@ -107,8 +107,8 @@ export default function TermsPage() {
           <h2>12. Contact</h2>
           <p>
             Questions about these terms? Contact us at{" "}
-            <a href="mailto:legal@spatix.io" className="text-indigo-600 hover:underline">
-              legal@spatix.io
+            <a href="https://spatix.io" className="text-indigo-600 hover:underline">
+              the contact form on our homepage
             </a>
           </p>
         </div>
