@@ -149,7 +149,7 @@ export default function MapsPage() {
     setLoadingMyMaps(true)
     setMyMapsError(null)
     try {
-      const res = await fetch(\`\${API_URL}/api/maps/by-email?email=\${encodeURIComponent(storedEmail)}\`)
+      const res = await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail)}`)
       if (res.ok) {
         const data = await res.json()
         setMyMaps(data.maps || [])
@@ -179,7 +179,7 @@ export default function MapsPage() {
         .flatMap(l => l.data?.features || [])
       const mergedGeojson = { type: "FeatureCollection", features: allFeatures }
 
-      const res = await fetch(\`\${API_URL}/api/map\`, {
+      const res = await fetch(`${API_URL}/api/map`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -204,7 +204,7 @@ export default function MapsPage() {
       setShowShareModal(true)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error"
-      setErrorToast(\`Failed to save map: \${message}\`)
+      setErrorToast(`Failed to save map: ${message}`)
     } finally {
       setSaving(false)
     }
