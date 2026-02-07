@@ -229,67 +229,67 @@ export default function Home() {
       <Navbar />
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden">
-        {/* Background gradient */}
-        <div className="absolute inset-0 bg-gradient-to-br from-brand-50 via-white to-violet-50 -z-10" />
-        <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-brand-100/50 to-transparent -z-10" />
-        
+      <section className="relative overflow-hidden bg-[#0a0e1a]">
+        {/* Subtle gradient background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-violet-950/40 via-[#0a0e1a] to-indigo-950/30 -z-10" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-violet-600/8 rounded-full blur-3xl -z-10" />
+
         <div className="max-w-6xl mx-auto px-6 py-20 lg:py-28">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             {/* Left: Copy */}
             <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-100 text-brand-700 rounded-full text-sm font-medium mb-6">
-                <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-pulse"></span>
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-violet-500/15 text-violet-300 rounded-full text-sm font-medium mb-6 border border-violet-500/20">
+                <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-pulse"></span>
                 The fastest way to map data
               </div>
-              
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-900 mb-6 leading-[1.1] tracking-tight">
+
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-[1.1] tracking-tight">
                 Beautiful maps<br />
-                <span className="text-brand-600">in seconds</span>
+                <span className="bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">in seconds</span>
               </h1>
-              
-              <p className="text-lg text-slate-600 mb-8 leading-relaxed max-w-lg">
-                Drop your data, style it beautifully, share anywhere. No GIS expertise needed. 
+
+              <p className="text-lg text-slate-400 mb-8 leading-relaxed max-w-lg">
+                Drop your data, style it beautifully, share anywhere. No GIS expertise needed.
                 Perfect for teams, developers, and AI agents.
               </p>
-              
+
               <div className="flex flex-wrap gap-4 mb-8">
-                <a href="/maps" className="px-6 py-3 bg-brand-600 text-white rounded-xl hover:bg-brand-700 font-medium shadow-lg shadow-brand-600/25 transition-all hover:shadow-xl hover:shadow-brand-600/30">
+                <a href="/maps" className="px-6 py-3 bg-violet-600 text-white rounded-xl hover:bg-violet-500 font-medium shadow-lg shadow-violet-600/25 transition-all hover:shadow-xl hover:shadow-violet-500/30">
                   Create a map — it's free
                 </a>
-                <Link href="/developers" className="px-6 py-3 border border-slate-300 text-slate-700 rounded-xl hover:border-slate-400 hover:bg-slate-50 font-medium transition-all">
+                <Link href="/developers" className="px-6 py-3 border border-white/15 text-slate-300 rounded-xl hover:border-white/30 hover:bg-white/5 font-medium transition-all">
                   View API docs
                 </Link>
               </div>
-              
+
               <div className="flex items-center gap-6 text-sm text-slate-500">
                 <div className="flex items-center gap-2">
-                  <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                   Free to use
                 </div>
                 <div className="flex items-center gap-2">
-                  <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                   15+ file formats
                 </div>
               </div>
             </div>
-            
+
             {/* Right: Visual */}
             <div className="relative">
-              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+              <div className="bg-[#12141f] rounded-2xl shadow-2xl border border-white/10 overflow-hidden ring-1 ring-violet-500/10">
                 {/* Fake browser chrome */}
-                <div className="flex items-center gap-2 px-4 py-3 bg-slate-100 border-b border-slate-200">
+                <div className="flex items-center gap-2 px-4 py-3 bg-[#1a1d2e] border-b border-white/5">
                   <div className="flex gap-1.5">
-                    <div className="w-3 h-3 rounded-full bg-red-400"></div>
-                    <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-                    <div className="w-3 h-3 rounded-full bg-green-400"></div>
+                    <div className="w-3 h-3 rounded-full bg-red-500/70"></div>
+                    <div className="w-3 h-3 rounded-full bg-yellow-500/70"></div>
+                    <div className="w-3 h-3 rounded-full bg-green-500/70"></div>
                   </div>
                   <div className="flex-1 mx-4">
-                    <div className="bg-white rounded-lg px-3 py-1.5 text-xs text-slate-500 font-mono">
+                    <div className="bg-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-500 font-mono border border-white/5">
                       spatix.io/m/demo
                     </div>
                   </div>
@@ -299,15 +299,15 @@ export default function Home() {
                   <HeroMap />
                 </div>
               </div>
-              
+
               {/* Floating badges */}
-              <div className="absolute -left-4 top-1/4 bg-white rounded-xl shadow-lg px-4 py-3 border border-slate-200">
+              <div className="absolute -left-4 top-1/4 bg-[#1a1d2e]/90 backdrop-blur-sm rounded-xl shadow-lg px-4 py-3 border border-white/10">
                 <div className="text-xs text-slate-500 mb-1">Processing time</div>
-                <div className="text-lg font-bold text-slate-900">~2 seconds</div>
+                <div className="text-lg font-bold text-white">~2 seconds</div>
               </div>
-              <div className="absolute -right-4 bottom-1/4 bg-white rounded-xl shadow-lg px-4 py-3 border border-slate-200">
+              <div className="absolute -right-4 bottom-1/4 bg-[#1a1d2e]/90 backdrop-blur-sm rounded-xl shadow-lg px-4 py-3 border border-white/10">
                 <div className="text-xs text-slate-500 mb-1">Formats supported</div>
-                <div className="text-lg font-bold text-slate-900">15+ types</div>
+                <div className="text-lg font-bold text-white">15+ types</div>
               </div>
             </div>
           </div>

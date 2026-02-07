@@ -222,6 +222,21 @@ export default function MapsPage() {
         .flatMap(l => l.data?.features || [])
       const mergedGeojson = { type: "FeatureCollection", features: allFeatures }
 
+      // Derive style from the primary layer so the shared view preserves it
+      const primaryLayer = layers.find(l => l.visible) || layers[0]
+      const layerStyle = primaryLayer ? {
+        fillColor: `rgb(${primaryLayer.color.join(",")})`,
+        fillOpacity: primaryLayer.opacity * 0.6,
+        strokeColor: `rgb(${primaryLayer.color.join(",")})`,
+        strokeWidth: 2,
+        strokeOpacity: Math.min(primaryLayer.opacity + 0.2, 1),
+        pointRadius: 6,
+      } : undefined
+
+      // Capture current map view so the shared map restores exactly
+      const currentCenter = map.current ? [map.current.getCenter().lng, map.current.getCenter().lat] : undefined
+      const currentZoom = map.current ? Math.round(map.current.getZoom() * 10) / 10 : undefined
+
       const res = await fetch(`${API_URL}/api/map`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -230,6 +245,9 @@ export default function MapsPage() {
           title: mapTitle || "Untitled Map",
           style: basemap === "dark" ? "dark" : basemap === "satellite" ? "satellite" : "light",
           email: email.trim().toLowerCase(),
+          layerStyle,
+          center: currentCenter,
+          zoom: currentZoom,
         }),
       })
 
@@ -290,20 +308,56 @@ export default function MapsPage() {
         }))
 
       if (layer.vizType === "heatmap" && layer.type === "point") {
-        // HeatmapLayer does not support picking
+        // Find a numeric property to use as weight for better intensity variation
+        const weightAttr = (() => {
+          const candidateNames = ["mag", "magnitude", "value", "weight", "intensity", "count", "score", "rating", "depth", "size", "amount", "population", "density"]
+          const sampleProps = points.slice(0, 20).map((d: any) => d.properties)
+          for (const name of candidateNames) {
+            const match = sampleProps.some((p: any) => typeof p[name] === "number" || (typeof p[name] === "string" && !isNaN(Number(p[name]))))
+            if (match) return name
+          }
+          // Fall back to first numeric property
+          for (const key of Object.keys(sampleProps[0] || {})) {
+            if (sampleProps.filter((p: any) => typeof p[key] === "number").length > sampleProps.length * 0.5) return key
+          }
+          return null
+        })()
+
+        // Compute weight range for normalization
+        let getWeight: any = 1
+        if (weightAttr) {
+          const numericVals = points.map((d: any) => Number(d.properties[weightAttr])).filter((n: number) => !isNaN(n) && isFinite(n))
+          if (numericVals.length > 0) {
+            const min = Math.min(...numericVals)
+            const max = Math.max(...numericVals)
+            const range = max - min || 1
+            getWeight = (d: any) => {
+              const v = Number(d.properties[weightAttr])
+              return isNaN(v) ? 0.1 : 0.1 + 0.9 * ((v - min) / range)
+            }
+          }
+        }
+
+        // Vibrant heatmap gradient: deep purple -> magenta -> orange -> yellow -> white
+        const HEATMAP_COLORS: [number, number, number][] = [
+          [75, 0, 130],    // deep indigo
+          [156, 39, 176],  // purple
+          [233, 30, 99],   // pink
+          [255, 87, 34],   // deep orange
+          [255, 193, 7],   // amber
+          [255, 255, 255], // white hot
+        ]
+
         return new HeatmapLayer({
           id: `heatmap-${layer.id}`,
           data: points,
           getPosition: (d: any) => d.position,
-          getWeight: 1,
-          radiusPixels: layer.radius || 30,
-          intensity: 1,
-          threshold: 0.03,
+          getWeight,
+          radiusPixels: layer.radius || 40,
+          intensity: 2.5,
+          threshold: 0.05,
           opacity: layer.opacity,
-          colorRange: COLOR_PALETTES.uber.map(c => {
-            const hex = c.replace('#', '')
-            return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)]
-          })
+          colorRange: HEATMAP_COLORS,
         })
       }
 
@@ -573,7 +627,43 @@ export default function MapsPage() {
     } catch (e) {}
   }
 
-  // Split GeoJSON by geometry type
+  // Detect a categorical column suitable for splitting into layers
+  const detectCategoryColumn = (features: any[]): string | null => {
+    if (features.length < 2) return null
+    const candidateNames = ["type", "category", "group", "layer", "class", "kind", "status", "classification", "zone", "label", "sector", "region"]
+    const allKeys = new Set<string>()
+    features.slice(0, 50).forEach((f: any) => {
+      Object.keys(f.properties || {}).forEach(k => allKeys.add(k))
+    })
+
+    // First pass: check for columns with common category-like names
+    for (const name of candidateNames) {
+      const match = Array.from(allKeys).find(k => k.toLowerCase() === name || k.toLowerCase() === `${name}_name`)
+      if (match) {
+        const values = features.map((f: any) => f.properties?.[match]).filter((v: any) => v != null && v !== "")
+        const unique = new Set(values.map(String))
+        if (unique.size >= 2 && unique.size <= 10 && unique.size < features.length * 0.5) {
+          return match
+        }
+      }
+    }
+
+    // Second pass: find any string column with 2-8 unique values (good layer split)
+    for (const key of Array.from(allKeys)) {
+      const values = features.slice(0, 200).map((f: any) => f.properties?.[key]).filter((v: any) => v != null && v !== "")
+      if (values.length === 0) continue
+      const stringVals = values.filter((v: any) => typeof v === "string")
+      if (stringVals.length / values.length < 0.8) continue
+      const unique = new Set(stringVals)
+      if (unique.size >= 2 && unique.size <= 8 && unique.size < values.length * 0.5) {
+        return key
+      }
+    }
+
+    return null
+  }
+
+  // Split GeoJSON by geometry type, then by category if single geometry type
   const splitByGeometryType = (geojson: any, baseName: string) => {
     const features = geojson.features || [geojson]
     const points: any[] = []
@@ -586,7 +676,6 @@ export default function MapsPage() {
       else if (type === "LineString" || type === "MultiLineString") lines.push({ ...f, geometry: geom })
       else if (type === "Polygon" || type === "MultiPolygon") polygons.push({ ...f, geometry: geom })
       else if (type === "GeometryCollection") {
-        // Flatten GeometryCollection into individual features per geometry
         geom.geometries?.forEach((g: any) => classify(f, g))
       }
     }
@@ -594,28 +683,37 @@ export default function MapsPage() {
     features.forEach((f: any) => classify(f, f.geometry))
 
     const result: { name: string; type: "point" | "line" | "polygon"; data: any }[] = []
-    
-    if (points.length > 0) {
-      result.push({
-        name: polygons.length > 0 || lines.length > 0 ? `${baseName} · Points` : baseName,
-        type: "point",
-        data: { type: "FeatureCollection", features: points }
-      })
+    const hasMultipleGeomTypes = [points, lines, polygons].filter(a => a.length > 0).length > 1
+
+    // Helper to split a group of features by category column
+    const splitByCategory = (feats: any[], geomType: "point" | "line" | "polygon", suffix: string) => {
+      const categoryCol = detectCategoryColumn(feats)
+      if (categoryCol) {
+        const groups = new Map<string, any[]>()
+        feats.forEach(f => {
+          const val = String(f.properties?.[categoryCol] ?? "Other")
+          if (!groups.has(val)) groups.set(val, [])
+          groups.get(val)!.push(f)
+        })
+        for (const [val, groupFeats] of Array.from(groups.entries())) {
+          result.push({
+            name: `${baseName} · ${val}`,
+            type: geomType,
+            data: { type: "FeatureCollection", features: groupFeats }
+          })
+        }
+      } else {
+        result.push({
+          name: hasMultipleGeomTypes ? `${baseName} · ${suffix}` : baseName,
+          type: geomType,
+          data: { type: "FeatureCollection", features: feats }
+        })
+      }
     }
-    if (lines.length > 0) {
-      result.push({
-        name: points.length > 0 || polygons.length > 0 ? `${baseName} · Lines` : baseName,
-        type: "line", 
-        data: { type: "FeatureCollection", features: lines }
-      })
-    }
-    if (polygons.length > 0) {
-      result.push({
-        name: points.length > 0 || lines.length > 0 ? `${baseName} · Polygons` : baseName,
-        type: "polygon",
-        data: { type: "FeatureCollection", features: polygons }
-      })
-    }
+
+    if (points.length > 0) splitByCategory(points, "point", "Points")
+    if (lines.length > 0) splitByCategory(lines, "line", "Lines")
+    if (polygons.length > 0) splitByCategory(polygons, "polygon", "Polygons")
 
     return result
   }
@@ -1301,14 +1399,14 @@ export default function MapsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(tableLayer.data?.features || []).map((feature: any, idx: number) => (
+                    {(tableLayer.data?.features || []).slice(0, 500).map((feature: any, idx: number) => (
                       <tr
                         key={idx}
                         onClick={() => {
                           const props = feature.properties || {}
                           setSelectedFeature({ properties: props, layerName: tableLayer.name, geometryType: feature.geometry?.type || tableLayer.type })
                         }}
-                        className="hover:bg-[#6b5ce7]/10 cursor-pointer border-b border-[#3a4552]/30 transition-colors"
+                        className="hover:bg-[#6b5ce7]/10 cursor-pointer border-b border-[#3a4552]/30"
                       >
                         <td className="px-3 py-1.5 text-[#6a7485] tabular-nums">{idx + 1}</td>
                         {tableColumns.map(col => (
@@ -1318,6 +1416,13 @@ export default function MapsPage() {
                         ))}
                       </tr>
                     ))}
+                    {(tableLayer.data?.features?.length || 0) > 500 && (
+                      <tr>
+                        <td colSpan={tableColumns.length + 1} className="px-3 py-2 text-center text-[#6a7485] text-xs">
+                          Showing 500 of {tableLayer.data.features.length.toLocaleString()} rows
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

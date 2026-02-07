@@ -95,19 +95,25 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
         const fillOpacity = config.style?.fillOpacity ?? 0.3
         const strokeOpacity = config.style?.strokeOpacity ?? 0.8
         const strokeWidth = config.style?.strokeWidth || 2
+        const pointRadius = config.style?.pointRadius || 6
 
-        // Points - scale smoothly with zoom
+        // Points - scale smoothly with zoom, use saved radius
         map.addLayer({
           id: "data-points",
           type: "circle",
           source: "data",
           filter: ["==", ["geometry-type"], "Point"],
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2, 5, 4, 10, 6, 15, 10],
+            "circle-radius": ["interpolate", ["linear"], ["zoom"],
+              1, Math.max(pointRadius * 0.3, 2),
+              5, Math.max(pointRadius * 0.6, 3),
+              10, pointRadius,
+              15, pointRadius * 1.5
+            ],
             "circle-color": parseColor(fillColor, 1),
             "circle-opacity": Math.min(fillOpacity + 0.3, 1),
             "circle-stroke-color": parseColor(strokeColor, 1),
-            "circle-stroke-width": 1,
+            "circle-stroke-width": 1.5,
             "circle-stroke-opacity": strokeOpacity,
           },
         })
@@ -150,7 +156,7 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
           },
         })
 
-        // Fit bounds
+        // Fit bounds with animation
         const bounds = new maplibregl.LngLatBounds()
         config.geojson.features.forEach((f: any) => {
           const add = (c: any) => {
@@ -159,7 +165,15 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
           }
           if (f.geometry?.coordinates) add(f.geometry.coordinates)
         })
-        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
+
+        // Use saved center/zoom if available for exact restoration, otherwise fit bounds
+        if (config.center && config.zoom) {
+          map.jumpTo({ center: config.center, zoom: config.zoom })
+        } else if (config.bounds?.length === 2) {
+          map.fitBounds(config.bounds as any, { padding: 50, duration: 0 })
+        } else if (!bounds.isEmpty()) {
+          map.fitBounds(bounds, { padding: 50, maxZoom: 15, duration: 0 })
+        }
 
         // Popups on click
         map.on("click", "data-points", (e) => {
@@ -182,9 +196,6 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
         const marker = new maplibregl.Marker({ element: el }).setLngLat([m.lng, m.lat]).addTo(map)
         if (m.label) marker.setPopup(new maplibregl.Popup().setHTML(`<strong>${m.label}</strong>`))
       })
-
-      if (config.bounds?.length === 2) map.fitBounds(config.bounds as any, { padding: 50 })
-      if (config.center && config.zoom) { map.setCenter(config.center); map.setZoom(config.zoom) }
     })
 
     mapRef.current = map
