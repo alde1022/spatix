@@ -71,6 +71,8 @@ class MapRequest(BaseModel):
     zoom: Optional[int] = None
     # Email for save-gated flow (anonymous users)
     email: Optional[str] = None
+    # Custom layer styling from frontend
+    layerStyle: Optional[Dict[str, Any]] = None
     
     model_config = {"extra": "allow"}
     
@@ -404,9 +406,12 @@ async def create_map(
         map_id = generate_map_id()
         delete_token = generate_delete_token()
 
+        # Use custom layerStyle if provided, otherwise auto-generate
+        style = body.layerStyle if body.layerStyle else auto_style(geojson)
+        
         map_config = {
             "geojson": geojson,
-            "style": auto_style(geojson),
+            "style": style,
             "mapStyle": body.style if body.style != "auto" else "light",
             "bounds": bounds,
             "center": body.center,

@@ -174,10 +174,33 @@ export default function MapsPage() {
 
     setSaving(true)
     try {
-      const allFeatures = layers
-        .filter(l => l.visible)
-        .flatMap(l => l.data?.features || [])
+      // Get visible layers and their styles
+      const visibleLayers = layers.filter(l => l.visible)
+      
+      // Merge features but tag each with its layer's style
+      const allFeatures = visibleLayers.flatMap(layer => 
+        (layer.data?.features || []).map((f: any) => ({
+          ...f,
+          properties: {
+            ...f.properties,
+            _layerColor: layer.color,
+            _layerOpacity: layer.opacity,
+            _layerVizType: layer.vizType,
+          }
+        }))
+      )
       const mergedGeojson = { type: "FeatureCollection", features: allFeatures }
+
+      // Build style from first layer (primary style)
+      const primaryLayer = visibleLayers[0]
+      const layerStyle = primaryLayer ? {
+        fillColor: `rgb(${primaryLayer.color[0]},${primaryLayer.color[1]},${primaryLayer.color[2]})`,
+        fillOpacity: primaryLayer.opacity * 0.5,
+        strokeColor: `rgb(${primaryLayer.color[0]},${primaryLayer.color[1]},${primaryLayer.color[2]})`,
+        strokeWidth: 2,
+        strokeOpacity: primaryLayer.opacity,
+        pointRadius: 5,
+      } : undefined
 
       const res = await fetch(`${API_URL}/api/map`, {
         method: "POST",
@@ -187,6 +210,7 @@ export default function MapsPage() {
           title: mapTitle || "Untitled Map",
           style: basemap === "dark" ? "dark" : basemap === "satellite" ? "satellite" : "light",
           email: email.trim().toLowerCase(),
+          layerStyle: layerStyle,
         }),
       })
 
