@@ -129,7 +129,7 @@ export default function MapsPage() {
   const map = useRef<maplibregl.Map | null>(null)
   const deckOverlay = useRef<MapboxOverlay | null>(null)
   const [mapReady, setMapReady] = useState(false)
-  const [basemap, setBasemap] = useState<string>("streets")
+  const [basemap, setBasemap] = useState<string>("dark")
   const [layers, setLayers] = useState<Layer[]>([])
   const [activePanel, setActivePanel] = useState<"layers" | "add" | "history" | null>("add")
   const [uploading, setUploading] = useState(false)
