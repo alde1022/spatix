@@ -84,6 +84,35 @@ interface Layer {
   vizType: VizType
   height?: number
   radius?: number
+  colorBy?: string | null
+  colorDomain?: number[] | string[]
+  colorType?: 'numeric' | 'categorical'
+}
+
+// Get color for a feature based on color-by attribute
+function getFeatureColor(properties: Record<string, any>, layer: Layer): number[] {
+  if (!layer.colorBy || !layer.colorDomain) return layer.color
+
+  const value = properties[layer.colorBy]
+  if (value == null) return [128, 128, 128]
+
+  if (layer.colorType === 'numeric') {
+    const domain = layer.colorDomain as number[]
+    const [min, max] = [domain[0], domain[domain.length - 1]]
+    const t = max > min ? Math.max(0, Math.min(1, (Number(value) - min) / (max - min))) : 0.5
+    const palette = COLOR_PALETTES.uber
+    const idx = Math.min(Math.floor(t * palette.length), palette.length - 1)
+    const hex = palette[idx].replace('#', '')
+    return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)]
+  }
+
+  if (layer.colorType === 'categorical') {
+    const idx = (layer.colorDomain as string[]).indexOf(String(value))
+    if (idx === -1) return [128, 128, 128]
+    return LAYER_COLORS[idx % LAYER_COLORS.length]
+  }
+
+  return layer.color
 }
 
 interface SavedMap {
@@ -122,6 +151,12 @@ export default function MapsPage() {
 
   // Tooltip state for hover
   const [tooltip, setTooltip] = useState<{x: number; y: number; properties: Record<string, any>; layerName: string} | null>(null)
+
+  // Click-to-inspect state
+  const [selectedFeature, setSelectedFeature] = useState<{properties: Record<string, any>; layerName: string; geometryType: string} | null>(null)
+
+  // Cursor coordinate display
+  const [cursorCoords, setCursorCoords] = useState<{lng: number; lat: number} | null>(null)
 
   // My Maps history state
   const [myMaps, setMyMaps] = useState<SavedMap[]>([])
@@ -299,7 +334,9 @@ export default function MapsPage() {
           id: `scatter-${layer.id}`,
           data: points,
           getPosition: (d: any) => d.position,
-          getFillColor: layer.color,
+          getFillColor: layer.colorBy
+            ? ((d: any) => getFeatureColor(d.properties, layer)) as any
+            : layer.color,
           getRadius: 5,
           radiusScale: 1,
           radiusMinPixels: 3,
@@ -312,6 +349,10 @@ export default function MapsPage() {
           autoHighlight: true,
           highlightColor: [255, 255, 255, 80],
           onHover: (info: any) => onLayerHover(info, layer.name),
+          onClick: (info: any) => {
+            if (info.object) setSelectedFeature({ properties: info.object.properties || {}, layerName: layer.name, geometryType: 'Point' })
+          },
+          updateTriggers: { getFillColor: [layer.color, layer.colorBy, layer.colorDomain] },
         })
       }
 
@@ -322,8 +363,12 @@ export default function MapsPage() {
           data: layer.data,
           filled: layer.type === "polygon",
           stroked: true,
-          getFillColor: [...layer.color, Math.floor(layer.opacity * 128)],
-          getLineColor: layer.color,
+          getFillColor: layer.colorBy
+            ? ((d: any) => [...getFeatureColor(d.properties, layer), Math.floor(layer.opacity * 128)]) as any
+            : [...layer.color, Math.floor(layer.opacity * 128)],
+          getLineColor: layer.colorBy
+            ? ((d: any) => getFeatureColor(d.properties, layer)) as any
+            : layer.color,
           getLineWidth: 2,
           lineWidthMinPixels: 1,
           extruded: layer.vizType === "3d",
@@ -333,6 +378,10 @@ export default function MapsPage() {
           autoHighlight: true,
           highlightColor: [255, 255, 255, 80],
           onHover: (info: any) => onLayerHover(info, layer.name),
+          onClick: (info: any) => {
+            if (info.object) setSelectedFeature({ properties: info.object.properties || {}, layerName: layer.name, geometryType: info.object.geometry?.type || layer.type })
+          },
+          updateTriggers: { getFillColor: [layer.color, layer.colorBy, layer.colorDomain, layer.opacity], getLineColor: [layer.color, layer.colorBy, layer.colorDomain] },
         })
       }
 
@@ -361,6 +410,11 @@ export default function MapsPage() {
     })
 
     m.addControl(new maplibregl.NavigationControl({ showCompass: true }), "bottom-right")
+
+    m.on('mousemove', (e) => {
+      setCursorCoords({ lng: e.lngLat.lng, lat: e.lngLat.lat })
+    })
+    m.on('mouseout', () => setCursorCoords(null))
 
     m.on("load", () => {
       // Initialize deck.gl overlay
@@ -573,6 +627,11 @@ export default function MapsPage() {
       const data = await response.json()
       if (!data.preview_geojson) throw new Error("No geographic data found")
 
+      // Warn if data was truncated to preview limit
+      if (data.feature_count && data.feature_count > 1000) {
+        setErrorToast(`Showing 1,000 of ${data.feature_count.toLocaleString()} features (preview limit)`)
+      }
+
       const baseName = file.name.replace(/\.[^/.]+$/, "")
       const layerGroups = splitByGeometryType(data.preview_geojson, baseName)
 
@@ -644,6 +703,42 @@ export default function MapsPage() {
   const updateLayerRadius = (id: string, radius: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, radius } : l))
   const updateLayerHeight = (id: string, height: number) => setLayers(prev => prev.map(l => l.id === id ? { ...l, height } : l))
   const removeLayer = (id: string) => setLayers(prev => prev.filter(l => l.id !== id))
+
+  const updateLayerColorBy = (id: string, attribute: string | null) => {
+    setLayers(prev => prev.map(l => {
+      if (l.id !== id) return l
+      if (!attribute) return { ...l, colorBy: null, colorDomain: undefined, colorType: undefined }
+
+      const features = l.data?.features || []
+      const values = features.map((f: any) => f.properties?.[attribute]).filter((v: any) => v != null)
+      const numericValues = values.filter((v: any) => typeof v === 'number' || (typeof v === 'string' && !isNaN(Number(v)) && v.trim() !== ''))
+      const isNumeric = numericValues.length / Math.max(values.length, 1) > 0.8
+
+      if (isNumeric) {
+        const nums = numericValues.map(Number)
+        return { ...l, colorBy: attribute, colorDomain: [Math.min(...nums), Math.max(...nums)], colorType: 'numeric' as const }
+      } else {
+        const unique = [...new Set(values.map(String))].slice(0, 8)
+        return { ...l, colorBy: attribute, colorDomain: unique, colorType: 'categorical' as const }
+      }
+    }))
+  }
+
+  const handleExport = () => {
+    const allFeatures = layers
+      .filter(l => l.visible)
+      .flatMap(l => l.data?.features || [])
+    const geojson = { type: "FeatureCollection", features: allFeatures }
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `spatix-export.geojson`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -800,6 +895,25 @@ export default function MapsPage() {
                         </div>
                       </div>
 
+                      {/* Color By Attribute */}
+                      {layer.data?.features?.[0]?.properties && Object.keys(layer.data.features[0].properties).length > 0 && (
+                        <div>
+                          <label className="block text-[10px] font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Color By</label>
+                          <select
+                            value={layer.colorBy || ""}
+                            onChange={(e) => updateLayerColorBy(layer.id, e.target.value || null)}
+                            className="w-full px-3 py-2 bg-[#242730] border border-[#3a4552] rounded-lg text-white text-xs focus:outline-none focus:border-[#6b5ce7] appearance-none cursor-pointer"
+                          >
+                            <option value="">Uniform color</option>
+                            {[...new Set(
+                              (layer.data.features || []).flatMap((f: any) => Object.keys(f.properties || {}))
+                            )].map((attr: string) => (
+                              <option key={attr} value={attr}>{attr}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
                       {/* Radius (for heatmap/hexagon) */}
                       {(layer.vizType === "heatmap" || layer.vizType === "hexagon") && (
                         <div>
@@ -953,9 +1067,9 @@ export default function MapsPage() {
             </div>
           </div>
 
-          {/* Save & Share button */}
+          {/* Save & Share + Export buttons */}
           {layers.length > 0 && (
-            <div className="px-4 pb-4">
+            <div className="px-4 pb-4 space-y-2">
               <button
                 onClick={() => setShowSaveModal(true)}
                 className="w-full py-3 bg-[#6b5ce7] hover:bg-[#5a4bd6] text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#6b5ce7]/25"
@@ -964,6 +1078,15 @@ export default function MapsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                 </svg>
                 Save & Share
+              </button>
+              <button
+                onClick={handleExport}
+                className="w-full py-2.5 border border-[#3a4552] text-[#6a7485] hover:text-white hover:bg-[#3a4552] font-medium rounded-xl transition-all flex items-center justify-center gap-2 text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download GeoJSON
               </button>
             </div>
           )}
@@ -1011,6 +1134,73 @@ export default function MapsPage() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Click-to-Inspect Panel */}
+        {selectedFeature && (
+          <div className="absolute top-4 right-4 z-20 w-80 max-h-[70vh] bg-[#1a1e25]/95 backdrop-blur-sm rounded-xl shadow-2xl border border-[#3a4552] overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#3a4552]">
+              <div>
+                <p className="text-[#8b7cf7] text-[10px] font-semibold uppercase tracking-wider">{selectedFeature.layerName}</p>
+                <p className="text-[#6a7485] text-[10px]">{selectedFeature.geometryType}</p>
+              </div>
+              <button onClick={() => setSelectedFeature(null)} className="text-[#6a7485] hover:text-white p-1 rounded-lg hover:bg-[#3a4552] transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-[calc(70vh-48px)] p-4 space-y-0">
+              {Object.entries(selectedFeature.properties)
+                .filter(([, v]) => v != null && v !== '')
+                .map(([key, value]) => (
+                  <div key={key} className="flex justify-between gap-3 text-xs py-2 border-b border-[#3a4552]/50 last:border-0">
+                    <span className="text-[#6a7485] font-medium shrink-0">{key}</span>
+                    <span className="text-white text-right break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                  </div>
+                ))
+              }
+              {Object.keys(selectedFeature.properties).filter(k => selectedFeature.properties[k] != null && selectedFeature.properties[k] !== '').length === 0 && (
+                <p className="text-[#6a7485] text-xs text-center py-4">No attributes</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Legend for Color-By Layers */}
+        {layers.some(l => l.visible && l.colorBy) && (
+          <div className="absolute bottom-10 left-2 z-10 bg-[#1a1e25]/90 backdrop-blur-sm rounded-xl px-4 py-3 border border-[#3a4552] max-w-[220px]">
+            {layers.filter(l => l.visible && l.colorBy).map(layer => (
+              <div key={layer.id} className="mb-3 last:mb-0">
+                <p className="text-[10px] font-semibold text-[#8b7cf7] uppercase tracking-wider mb-2">{layer.colorBy}</p>
+                {layer.colorType === 'numeric' ? (
+                  <div>
+                    <div className="h-2.5 rounded-full" style={{ background: `linear-gradient(to right, ${COLOR_PALETTES.uber.join(', ')})` }} />
+                    <div className="flex justify-between text-[10px] text-[#6a7485] mt-1">
+                      <span>{(layer.colorDomain as number[])?.[0]?.toLocaleString()}</span>
+                      <span>{(layer.colorDomain as number[])?.[1]?.toLocaleString()}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {(layer.colorDomain as string[])?.map((val, i) => (
+                      <div key={val} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: `rgb(${LAYER_COLORS[i % LAYER_COLORS.length].join(',')})` }} />
+                        <span className="text-[10px] text-[#6a7485] truncate">{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Coordinate Display */}
+        {cursorCoords && (
+          <div className="absolute bottom-2 left-2 z-10 bg-[#1a1e25]/80 backdrop-blur-sm rounded-lg px-3 py-1.5 text-[11px] font-mono text-[#6a7485]">
+            {cursorCoords.lat.toFixed(6)}, {cursorCoords.lng.toFixed(6)}
           </div>
         )}
       </div>
