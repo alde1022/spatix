@@ -718,7 +718,7 @@ export default function MapsPage() {
         const nums = numericValues.map(Number)
         return { ...l, colorBy: attribute, colorDomain: [Math.min(...nums), Math.max(...nums)], colorType: 'numeric' as const }
       } else {
-        const unique = [...new Set(values.map(String))].slice(0, 8)
+        const unique = Array.from(new Set<string>(values.map(String))).slice(0, 8)
         return { ...l, colorBy: attribute, colorDomain: unique, colorType: 'categorical' as const }
       }
     }))
@@ -905,9 +905,9 @@ export default function MapsPage() {
                             className="w-full px-3 py-2 bg-[#242730] border border-[#3a4552] rounded-lg text-white text-xs focus:outline-none focus:border-[#6b5ce7] appearance-none cursor-pointer"
                           >
                             <option value="">Uniform color</option>
-                            {[...new Set(
+                            {Array.from(new Set<string>(
                               (layer.data.features || []).flatMap((f: any) => Object.keys(f.properties || {}))
-                            )].map((attr: string) => (
+                            )).map((attr) => (
                               <option key={attr} value={attr}>{attr}</option>
                             ))}
                           </select>
