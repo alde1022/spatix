@@ -79,7 +79,7 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
       style: style as any,
       center: [0, 20],
       zoom: 2,
-      attributionControl: !isEmbed,
+      attributionControl: isEmbed ? false : { compact: true },
     })
 
     if (!isEmbed) {
