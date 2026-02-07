@@ -356,7 +356,7 @@ async def create_map_from_text(
     # Record contribution + award points
     entity_type = "agent" if body.agent_id else "user"
     entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
-    pts = POINTS_MAP_CREATE * get_points_multiplier(user_plan)
+    pts = POINTS_MAP_CREATE * get_points_multiplier(entity_type, entity_id)
 
     record_contribution(
         action="map_create",
@@ -497,7 +497,7 @@ async def create_map_from_addresses(
     # Record contribution + award points
     entity_type = "agent" if body.agent_id else "user"
     entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
-    pts = POINTS_MAP_CREATE * get_points_multiplier(user_plan)
+    pts = POINTS_MAP_CREATE * get_points_multiplier(entity_type, entity_id)
 
     record_contribution(
         action="map_create",
@@ -651,7 +651,7 @@ async def create_route_map(
     # Record contribution + award points
     entity_type = "agent" if body.agent_id else "user"
     entity_id = body.agent_id or (str(user_id) if user_id else (creator_email or "anonymous"))
-    pts = POINTS_MAP_CREATE * get_points_multiplier(user_plan)
+    pts = POINTS_MAP_CREATE * get_points_multiplier(entity_type, entity_id)
 
     record_contribution(
         action="map_create",

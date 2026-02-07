@@ -2,15 +2,18 @@
 """
 Seed the Spatix dataset registry with high-value public geospatial datasets.
 
-These are simplified GeoJSON datasets derived from public domain sources.
-They bootstrap the data catalog so the first agent that connects finds
-something useful — not an empty shelf.
+For boundary datasets (countries, US states), downloads real polygon GeoJSON
+from Natural Earth (public domain) at runtime. Falls back to centroid points
+if download fails.
+
+Other datasets (airports, landmarks, cities, etc.) use inline point data —
+these are correctly represented as points.
 
 Usage:
     python seed_datasets.py
 
 Sources:
-    - Natural Earth (public domain)
+    - Natural Earth (public domain) — ne_110m for countries, ne_110m for states
     - US Census TIGER/Line (public domain)
     - OpenStreetMap-derived (ODbL)
 """
@@ -18,6 +21,8 @@ import json
 import sys
 import os
 import logging
+from urllib.request import urlopen, Request
+from urllib.error import URLError
 
 # Add parent dir to path so we can import database
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,67 +34,191 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ==================== POLYGON DATA DOWNLOAD ====================
+# Downloads real boundary polygons from Natural Earth (public domain).
+# These are 110m resolution (simplified) — good for thematic maps.
+
+NATURAL_EARTH_COUNTRIES_URL = (
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/"
+    "master/geojson/ne_110m_admin_0_countries.geojson"
+)
+
+NATURAL_EARTH_STATES_URL = (
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/"
+    "master/geojson/ne_110m_admin_1_states_provinces.geojson"
+)
+
+# Fallback: US states from a well-known public domain source
+US_STATES_FALLBACK_URL = (
+    "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/"
+    "master/data/geojson/us-states.json"
+)
+
+
+def _download_geojson(url: str, timeout: int = 30) -> dict | None:
+    """Download and parse a GeoJSON file from a URL. Returns None on failure."""
+    try:
+        req = Request(url, headers={"User-Agent": "Spatix-Seed/1.0"})
+        with urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                logger.warning(f"HTTP {resp.status} for {url}")
+                return None
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("type") == "FeatureCollection" and data.get("features"):
+                return data
+            logger.warning(f"Not a valid FeatureCollection from {url}")
+            return None
+    except (URLError, json.JSONDecodeError, OSError, TimeoutError) as e:
+        logger.warning(f"Failed to download {url}: {e}")
+        return None
+
+
+def _build_world_countries_polygon() -> dict | None:
+    """Download real country polygons from Natural Earth 110m."""
+    logger.info("  Downloading world country polygons from Natural Earth...")
+    data = _download_geojson(NATURAL_EARTH_COUNTRIES_URL, timeout=60)
+    if not data:
+        return None
+
+    # Normalize properties to our schema
+    features = []
+    for f in data.get("features", []):
+        props = f.get("properties", {})
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "name": props.get("NAME", props.get("name", "Unknown")),
+                "iso_a3": props.get("ISO_A3", props.get("ADM0_A3", "")),
+                "continent": props.get("CONTINENT", props.get("continent", "")),
+                "pop_est": props.get("POP_EST", props.get("pop_est", 0)),
+            },
+            "geometry": f.get("geometry"),
+        })
+
+    if not features:
+        return None
+
+    logger.info(f"  Downloaded {len(features)} country polygons")
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _build_us_states_polygon() -> dict | None:
+    """Download real US state polygons from Natural Earth 110m or fallback."""
+    logger.info("  Downloading US state polygons...")
+
+    # Try Natural Earth first — filter to US states
+    data = _download_geojson(NATURAL_EARTH_STATES_URL, timeout=60)
+    if data:
+        features = []
+        for f in data.get("features", []):
+            props = f.get("properties", {})
+            # Filter to US states only (iso_a2 == "US" or adm0_a3 == "USA")
+            iso = props.get("iso_a2", props.get("ISO_A2", ""))
+            adm0 = props.get("adm0_a3", props.get("ADM0_A3", ""))
+            if iso == "US" or adm0 == "USA":
+                features.append({
+                    "type": "Feature",
+                    "properties": {
+                        "name": props.get("name", props.get("NAME", "Unknown")),
+                        "abbr": props.get("postal", props.get("iso_3166_2", "")),
+                        "fips": props.get("fips", props.get("FIPS", "")),
+                        "pop": props.get("pop_est", 0),
+                    },
+                    "geometry": f.get("geometry"),
+                })
+        if features:
+            logger.info(f"  Downloaded {len(features)} US state polygons from Natural Earth")
+            return {"type": "FeatureCollection", "features": features}
+
+    # Fallback to PublicaMundi US states GeoJSON
+    data = _download_geojson(US_STATES_FALLBACK_URL, timeout=30)
+    if data:
+        features = []
+        for f in data.get("features", []):
+            props = f.get("properties", {})
+            features.append({
+                "type": "Feature",
+                "properties": {
+                    "name": props.get("name", "Unknown"),
+                    "density": props.get("density", 0),
+                },
+                "geometry": f.get("geometry"),
+            })
+        if features:
+            logger.info(f"  Downloaded {len(features)} US state polygons from fallback")
+            return {"type": "FeatureCollection", "features": features}
+
+    return None
+
+
+# ==================== CENTROID FALLBACKS ====================
+# Used if polygon downloads fail. Still useful as point data.
+
+CENTROID_WORLD_COUNTRIES = {
+    "type": "FeatureCollection",
+    "features": [
+        {"type": "Feature", "properties": {"name": "United States", "iso_a3": "USA", "continent": "North America", "pop_est": 331002651}, "geometry": {"type": "Point", "coordinates": [-98.5, 39.8]}},
+        {"type": "Feature", "properties": {"name": "Canada", "iso_a3": "CAN", "continent": "North America", "pop_est": 37742154}, "geometry": {"type": "Point", "coordinates": [-106.3, 56.1]}},
+        {"type": "Feature", "properties": {"name": "Mexico", "iso_a3": "MEX", "continent": "North America", "pop_est": 128932753}, "geometry": {"type": "Point", "coordinates": [-102.5, 23.6]}},
+        {"type": "Feature", "properties": {"name": "Brazil", "iso_a3": "BRA", "continent": "South America", "pop_est": 212559417}, "geometry": {"type": "Point", "coordinates": [-51.9, -14.2]}},
+        {"type": "Feature", "properties": {"name": "United Kingdom", "iso_a3": "GBR", "continent": "Europe", "pop_est": 67886011}, "geometry": {"type": "Point", "coordinates": [-3.4, 55.3]}},
+        {"type": "Feature", "properties": {"name": "France", "iso_a3": "FRA", "continent": "Europe", "pop_est": 65273511}, "geometry": {"type": "Point", "coordinates": [2.2, 46.2]}},
+        {"type": "Feature", "properties": {"name": "Germany", "iso_a3": "DEU", "continent": "Europe", "pop_est": 83783942}, "geometry": {"type": "Point", "coordinates": [10.4, 51.1]}},
+        {"type": "Feature", "properties": {"name": "China", "iso_a3": "CHN", "continent": "Asia", "pop_est": 1439323776}, "geometry": {"type": "Point", "coordinates": [104.1, 35.8]}},
+        {"type": "Feature", "properties": {"name": "India", "iso_a3": "IND", "continent": "Asia", "pop_est": 1380004385}, "geometry": {"type": "Point", "coordinates": [78.9, 20.5]}},
+        {"type": "Feature", "properties": {"name": "Japan", "iso_a3": "JPN", "continent": "Asia", "pop_est": 126476461}, "geometry": {"type": "Point", "coordinates": [138.2, 36.2]}},
+        {"type": "Feature", "properties": {"name": "Australia", "iso_a3": "AUS", "continent": "Oceania", "pop_est": 25499884}, "geometry": {"type": "Point", "coordinates": [133.7, -25.2]}},
+        {"type": "Feature", "properties": {"name": "Nigeria", "iso_a3": "NGA", "continent": "Africa", "pop_est": 206139589}, "geometry": {"type": "Point", "coordinates": [8.6, 9.0]}},
+        {"type": "Feature", "properties": {"name": "South Africa", "iso_a3": "ZAF", "continent": "Africa", "pop_est": 59308690}, "geometry": {"type": "Point", "coordinates": [22.9, -30.5]}},
+        {"type": "Feature", "properties": {"name": "Russia", "iso_a3": "RUS", "continent": "Europe", "pop_est": 145934462}, "geometry": {"type": "Point", "coordinates": [105.3, 61.5]}},
+        {"type": "Feature", "properties": {"name": "Argentina", "iso_a3": "ARG", "continent": "South America", "pop_est": 45195774}, "geometry": {"type": "Point", "coordinates": [-63.6, -38.4]}},
+    ]
+}
+
+CENTROID_US_STATES = {
+    "type": "FeatureCollection",
+    "features": [
+        {"type": "Feature", "properties": {"name": "California", "abbr": "CA", "fips": "06", "pop": 39538223}, "geometry": {"type": "Point", "coordinates": [-119.4, 36.7]}},
+        {"type": "Feature", "properties": {"name": "Texas", "abbr": "TX", "fips": "48", "pop": 29145505}, "geometry": {"type": "Point", "coordinates": [-99.9, 31.9]}},
+        {"type": "Feature", "properties": {"name": "Florida", "abbr": "FL", "fips": "12", "pop": 21538187}, "geometry": {"type": "Point", "coordinates": [-81.5, 27.6]}},
+        {"type": "Feature", "properties": {"name": "New York", "abbr": "NY", "fips": "36", "pop": 20201249}, "geometry": {"type": "Point", "coordinates": [-75.0, 43.0]}},
+        {"type": "Feature", "properties": {"name": "Pennsylvania", "abbr": "PA", "fips": "42", "pop": 13002700}, "geometry": {"type": "Point", "coordinates": [-77.2, 41.2]}},
+        {"type": "Feature", "properties": {"name": "Illinois", "abbr": "IL", "fips": "17", "pop": 12812508}, "geometry": {"type": "Point", "coordinates": [-89.3, 40.3]}},
+        {"type": "Feature", "properties": {"name": "Ohio", "abbr": "OH", "fips": "39", "pop": 11799448}, "geometry": {"type": "Point", "coordinates": [-82.9, 40.4]}},
+        {"type": "Feature", "properties": {"name": "Georgia", "abbr": "GA", "fips": "13", "pop": 10711908}, "geometry": {"type": "Point", "coordinates": [-83.5, 32.1]}},
+        {"type": "Feature", "properties": {"name": "North Carolina", "abbr": "NC", "fips": "37", "pop": 10439388}, "geometry": {"type": "Point", "coordinates": [-79.0, 35.7]}},
+        {"type": "Feature", "properties": {"name": "Michigan", "abbr": "MI", "fips": "26", "pop": 10077331}, "geometry": {"type": "Point", "coordinates": [-84.5, 44.3]}},
+        {"type": "Feature", "properties": {"name": "Washington", "abbr": "WA", "fips": "53", "pop": 7614893}, "geometry": {"type": "Point", "coordinates": [-120.7, 47.7]}},
+        {"type": "Feature", "properties": {"name": "Colorado", "abbr": "CO", "fips": "08", "pop": 5773714}, "geometry": {"type": "Point", "coordinates": [-105.7, 39.5]}},
+        {"type": "Feature", "properties": {"name": "Massachusetts", "abbr": "MA", "fips": "25", "pop": 7029917}, "geometry": {"type": "Point", "coordinates": [-71.5, 42.4]}},
+        {"type": "Feature", "properties": {"name": "Oregon", "abbr": "OR", "fips": "41", "pop": 4237256}, "geometry": {"type": "Point", "coordinates": [-120.5, 43.8]}},
+        {"type": "Feature", "properties": {"name": "Hawaii", "abbr": "HI", "fips": "15", "pop": 1455271}, "geometry": {"type": "Point", "coordinates": [-155.6, 19.8]}},
+        {"type": "Feature", "properties": {"name": "Alaska", "abbr": "AK", "fips": "02", "pop": 733391}, "geometry": {"type": "Point", "coordinates": [-154.4, 63.5]}},
+    ]
+}
+
+
 # ==================== SEED DATA ====================
-# Each entry is a compact dataset with representative features.
-# Real deployment would pull full datasets from Natural Earth / Census APIs.
+# Point datasets — these are correctly represented as points.
 
 SEED_DATASETS = [
     {
         "id": "ds_world-countries",
         "title": "World Countries",
-        "description": "Country boundaries for all 195 sovereign nations. Simplified geometries suitable for thematic maps and choropleths.",
+        "description": "Country boundaries for all sovereign nations. Real polygon boundaries from Natural Earth 110m (simplified). Suitable for thematic maps and choropleths.",
         "license": "public-domain",
         "category": "boundaries",
-        "tags": "countries,world,boundaries,political,nations",
-        "data": {
-            "type": "FeatureCollection",
-            "features": [
-                {"type": "Feature", "properties": {"name": "United States", "iso_a3": "USA", "continent": "North America", "pop_est": 331002651}, "geometry": {"type": "Point", "coordinates": [-98.5, 39.8]}},
-                {"type": "Feature", "properties": {"name": "Canada", "iso_a3": "CAN", "continent": "North America", "pop_est": 37742154}, "geometry": {"type": "Point", "coordinates": [-106.3, 56.1]}},
-                {"type": "Feature", "properties": {"name": "Mexico", "iso_a3": "MEX", "continent": "North America", "pop_est": 128932753}, "geometry": {"type": "Point", "coordinates": [-102.5, 23.6]}},
-                {"type": "Feature", "properties": {"name": "Brazil", "iso_a3": "BRA", "continent": "South America", "pop_est": 212559417}, "geometry": {"type": "Point", "coordinates": [-51.9, -14.2]}},
-                {"type": "Feature", "properties": {"name": "United Kingdom", "iso_a3": "GBR", "continent": "Europe", "pop_est": 67886011}, "geometry": {"type": "Point", "coordinates": [-3.4, 55.3]}},
-                {"type": "Feature", "properties": {"name": "France", "iso_a3": "FRA", "continent": "Europe", "pop_est": 65273511}, "geometry": {"type": "Point", "coordinates": [2.2, 46.2]}},
-                {"type": "Feature", "properties": {"name": "Germany", "iso_a3": "DEU", "continent": "Europe", "pop_est": 83783942}, "geometry": {"type": "Point", "coordinates": [10.4, 51.1]}},
-                {"type": "Feature", "properties": {"name": "China", "iso_a3": "CHN", "continent": "Asia", "pop_est": 1439323776}, "geometry": {"type": "Point", "coordinates": [104.1, 35.8]}},
-                {"type": "Feature", "properties": {"name": "India", "iso_a3": "IND", "continent": "Asia", "pop_est": 1380004385}, "geometry": {"type": "Point", "coordinates": [78.9, 20.5]}},
-                {"type": "Feature", "properties": {"name": "Japan", "iso_a3": "JPN", "continent": "Asia", "pop_est": 126476461}, "geometry": {"type": "Point", "coordinates": [138.2, 36.2]}},
-                {"type": "Feature", "properties": {"name": "Australia", "iso_a3": "AUS", "continent": "Oceania", "pop_est": 25499884}, "geometry": {"type": "Point", "coordinates": [133.7, -25.2]}},
-                {"type": "Feature", "properties": {"name": "Nigeria", "iso_a3": "NGA", "continent": "Africa", "pop_est": 206139589}, "geometry": {"type": "Point", "coordinates": [8.6, 9.0]}},
-                {"type": "Feature", "properties": {"name": "South Africa", "iso_a3": "ZAF", "continent": "Africa", "pop_est": 59308690}, "geometry": {"type": "Point", "coordinates": [22.9, -30.5]}},
-                {"type": "Feature", "properties": {"name": "Russia", "iso_a3": "RUS", "continent": "Europe", "pop_est": 145934462}, "geometry": {"type": "Point", "coordinates": [105.3, 61.5]}},
-                {"type": "Feature", "properties": {"name": "Argentina", "iso_a3": "ARG", "continent": "South America", "pop_est": 45195774}, "geometry": {"type": "Point", "coordinates": [-63.6, -38.4]}},
-            ]
-        },
+        "tags": "countries,world,boundaries,political,nations,polygons",
+        "data": None,  # Resolved at runtime via download
     },
     {
         "id": "ds_us-states",
         "title": "US States",
-        "description": "All 50 US states plus DC with centroids, population, and FIPS codes. Use as a base layer for any US thematic map.",
+        "description": "US state boundaries with real polygon outlines from Natural Earth / Census. Use as a base layer for any US thematic map.",
         "license": "public-domain",
         "category": "boundaries",
-        "tags": "us,states,boundaries,census,fips",
-        "data": {
-            "type": "FeatureCollection",
-            "features": [
-                {"type": "Feature", "properties": {"name": "California", "abbr": "CA", "fips": "06", "pop": 39538223}, "geometry": {"type": "Point", "coordinates": [-119.4, 36.7]}},
-                {"type": "Feature", "properties": {"name": "Texas", "abbr": "TX", "fips": "48", "pop": 29145505}, "geometry": {"type": "Point", "coordinates": [-99.9, 31.9]}},
-                {"type": "Feature", "properties": {"name": "Florida", "abbr": "FL", "fips": "12", "pop": 21538187}, "geometry": {"type": "Point", "coordinates": [-81.5, 27.6]}},
-                {"type": "Feature", "properties": {"name": "New York", "abbr": "NY", "fips": "36", "pop": 20201249}, "geometry": {"type": "Point", "coordinates": [-75.0, 43.0]}},
-                {"type": "Feature", "properties": {"name": "Pennsylvania", "abbr": "PA", "fips": "42", "pop": 13002700}, "geometry": {"type": "Point", "coordinates": [-77.2, 41.2]}},
-                {"type": "Feature", "properties": {"name": "Illinois", "abbr": "IL", "fips": "17", "pop": 12812508}, "geometry": {"type": "Point", "coordinates": [-89.3, 40.3]}},
-                {"type": "Feature", "properties": {"name": "Ohio", "abbr": "OH", "fips": "39", "pop": 11799448}, "geometry": {"type": "Point", "coordinates": [-82.9, 40.4]}},
-                {"type": "Feature", "properties": {"name": "Georgia", "abbr": "GA", "fips": "13", "pop": 10711908}, "geometry": {"type": "Point", "coordinates": [-83.5, 32.1]}},
-                {"type": "Feature", "properties": {"name": "North Carolina", "abbr": "NC", "fips": "37", "pop": 10439388}, "geometry": {"type": "Point", "coordinates": [-79.0, 35.7]}},
-                {"type": "Feature", "properties": {"name": "Michigan", "abbr": "MI", "fips": "26", "pop": 10077331}, "geometry": {"type": "Point", "coordinates": [-84.5, 44.3]}},
-                {"type": "Feature", "properties": {"name": "Washington", "abbr": "WA", "fips": "53", "pop": 7614893}, "geometry": {"type": "Point", "coordinates": [-120.7, 47.7]}},
-                {"type": "Feature", "properties": {"name": "Colorado", "abbr": "CO", "fips": "08", "pop": 5773714}, "geometry": {"type": "Point", "coordinates": [-105.7, 39.5]}},
-                {"type": "Feature", "properties": {"name": "Massachusetts", "abbr": "MA", "fips": "25", "pop": 7029917}, "geometry": {"type": "Point", "coordinates": [-71.5, 42.4]}},
-                {"type": "Feature", "properties": {"name": "Oregon", "abbr": "OR", "fips": "41", "pop": 4237256}, "geometry": {"type": "Point", "coordinates": [-120.5, 43.8]}},
-                {"type": "Feature", "properties": {"name": "Hawaii", "abbr": "HI", "fips": "15", "pop": 1455271}, "geometry": {"type": "Point", "coordinates": [-155.6, 19.8]}},
-                {"type": "Feature", "properties": {"name": "Alaska", "abbr": "AK", "fips": "02", "pop": 733391}, "geometry": {"type": "Point", "coordinates": [-154.4, 63.5]}},
-            ]
-        },
+        "tags": "us,states,boundaries,census,fips,polygons",
+        "data": None,  # Resolved at runtime via download
     },
     {
         "id": "ds_us-national-parks",
@@ -316,13 +445,59 @@ def _calculate_bbox(data):
     """Calculate bounding box from GeoJSON features."""
     lngs, lats = [], []
     for f in data.get("features", []):
-        coords = f.get("geometry", {}).get("coordinates", [])
-        if len(coords) >= 2:
-            lngs.append(coords[0])
-            lats.append(coords[1])
+        geom = f.get("geometry", {})
+        _extract_all_coords(geom, lngs, lats)
     if not lngs:
         return -180, -90, 180, 90
     return min(lngs), min(lats), max(lngs), max(lats)
+
+
+def _extract_all_coords(geom: dict, lngs: list, lats: list):
+    """Extract all coordinates from any geometry type."""
+    gt = geom.get("type", "")
+    coords = geom.get("coordinates", [])
+
+    if gt == "Point" and len(coords) >= 2:
+        lngs.append(coords[0])
+        lats.append(coords[1])
+    elif gt in ("LineString", "MultiPoint"):
+        for c in coords:
+            if len(c) >= 2:
+                lngs.append(c[0])
+                lats.append(c[1])
+    elif gt in ("Polygon", "MultiLineString"):
+        for ring in coords:
+            for c in ring:
+                if len(c) >= 2:
+                    lngs.append(c[0])
+                    lats.append(c[1])
+    elif gt == "MultiPolygon":
+        for poly in coords:
+            for ring in poly:
+                for c in ring:
+                    if len(c) >= 2:
+                        lngs.append(c[0])
+                        lats.append(c[1])
+
+
+def _resolve_boundary_data():
+    """Download real polygon data for boundary datasets.
+    Returns dict mapping dataset_id -> GeoJSON FeatureCollection."""
+    resolved = {}
+
+    # World Countries
+    countries = _build_world_countries_polygon()
+    resolved["ds_world-countries"] = countries or CENTROID_WORLD_COUNTRIES
+    if not countries:
+        logger.warning("  Using centroid fallback for world countries")
+
+    # US States
+    states = _build_us_states_polygon()
+    resolved["ds_us-states"] = states or CENTROID_US_STATES
+    if not states:
+        logger.warning("  Using centroid fallback for US states")
+
+    return resolved
 
 
 def seed():
@@ -331,13 +506,22 @@ def seed():
     seeded = 0
     skipped = 0
 
+    # Resolve boundary polygon data (download at runtime)
+    logger.info("Resolving boundary polygon data...")
+    boundary_data = _resolve_boundary_data()
+
     for ds in SEED_DATASETS:
         if dataset_exists(ds["id"]):
             logger.info(f"  skip (exists): {ds['id']}")
             skipped += 1
             continue
 
-        data = ds["data"]
+        # Use downloaded polygon data for boundary datasets, inline data for others
+        data = boundary_data.get(ds["id"]) if ds["data"] is None else ds["data"]
+        if data is None:
+            logger.error(f"  ERROR: No data for {ds['id']}, skipping")
+            continue
+
         features = data.get("features", [])
         bbox_w, bbox_s, bbox_e, bbox_n = _calculate_bbox(data)
 
@@ -366,7 +550,8 @@ def seed():
             agent_name="spatix-seed",
         )
 
-        logger.info(f"  seeded: {ds['id']} ({len(features)} features)")
+        geom_info = ",".join(sorted(geom_types))
+        logger.info(f"  seeded: {ds['id']} ({len(features)} features, {geom_info})")
         seeded += 1
 
     logger.info(f"Done. Seeded {seeded}, skipped {skipped}.")

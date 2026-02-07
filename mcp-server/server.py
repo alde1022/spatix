@@ -14,6 +14,8 @@ Tools exposed:
   Data:
     - get_map: Retrieve an existing map by ID
     - upload_dataset: Contribute a public geospatial dataset (earns points)
+    - update_dataset: Update a dataset's metadata
+    - delete_dataset: Remove a dataset from the registry
     - search_datasets: Find public datasets to use as map layers
     - get_dataset: Get a dataset's GeoJSON data
   Platform:
@@ -583,6 +585,70 @@ async def upload_dataset(
     return "\n".join(parts)
 
 
+@mcp.tool()
+async def update_dataset(
+    dataset_id: str,
+    title: str = "",
+    description: str = "",
+    category: str = "",
+    tags: str = "",
+) -> str:
+    """Update a dataset's metadata. Requires authentication (SPATIX_API_TOKEN).
+
+    Args:
+        dataset_id: The dataset ID to update.
+        title: New title (leave empty to keep current).
+        description: New description (leave empty to keep current).
+        category: New category (leave empty to keep current).
+        tags: New comma-separated tags (leave empty to keep current).
+
+    Returns:
+        Confirmation of the update.
+    """
+    body: dict[str, Any] = {}
+    if title:
+        body["title"] = title
+    if description:
+        body["description"] = description
+    if category:
+        body["category"] = category
+    if tags:
+        body["tags"] = tags
+
+    if not body:
+        return "No fields to update. Provide at least one of: title, description, category, tags."
+
+    async with _client() as client:
+        resp = await client.put(f"/api/dataset/{dataset_id}", json=body)
+        resp.raise_for_status()
+        result = resp.json()
+
+    if result.get("success"):
+        return f"Dataset {dataset_id} updated successfully."
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def delete_dataset(dataset_id: str) -> str:
+    """Delete a dataset from the registry. Requires authentication (SPATIX_API_TOKEN).
+    Only the original uploader can delete a dataset.
+
+    Args:
+        dataset_id: The dataset ID to delete.
+
+    Returns:
+        Confirmation of deletion.
+    """
+    async with _client() as client:
+        resp = await client.delete(f"/api/dataset/{dataset_id}")
+        resp.raise_for_status()
+        result = resp.json()
+
+    if result.get("success"):
+        return f"Dataset {dataset_id} deleted."
+    return json.dumps(result, indent=2)
+
+
 # ---------------------------------------------------------------------------
 # Tools — Leaderboard & Points
 # ---------------------------------------------------------------------------
@@ -657,7 +723,7 @@ async def get_my_points() -> str:
     if data.get("member_since"):
         parts.append(f"  Member since: {data['member_since']}")
 
-    parts.append("\nPoints schedule (base, pro users earn 3x):")
+    parts.append("\nPoints schedule (base rate, multiplied by your tier):")
     parts.append("  Upload dataset: +50")
     parts.append("  Create map: +5")
     parts.append("  Create map with datasets: +10")
@@ -665,6 +731,8 @@ async def get_my_points() -> str:
     parts.append("  Your dataset queried: +1")
     parts.append("  Map hits 100 views: +10")
     parts.append("  Map hits 1000 views: +50")
+    parts.append("\nContribution tiers (earn more = earn faster):")
+    parts.append("  0-99 pts: 1x | 100-499 pts: 2x | 500+ pts: 3x")
     return "\n".join(parts)
 
 
@@ -717,11 +785,12 @@ async def points_schedule() -> str:
             "map_views_milestone_100": {"points": 10, "description": "Your map hits 100 views"},
             "map_views_milestone_1000": {"points": 50, "description": "Your map hits 1000 views"},
         },
-        "plan_multipliers": {
-            "free": 1,
-            "pro": 3,
+        "contribution_tiers": {
+            "0-99 pts": "1x",
+            "100-499 pts": "2x",
+            "500+ pts": "3x",
         },
-        "note": "Points will be snapshotted for future token distribution. Pro users earn 3x. Early contributors earn more.",
+        "note": "Points will be snapshotted for future token distribution. The more you contribute, the faster you earn. Early contributors earn more.",
     }, indent=2)
 
 

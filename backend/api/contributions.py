@@ -34,16 +34,29 @@ POINTS_SCHEDULE = {
     "map_views_milestone_1000": 50,  # Map hits 1000 views
 }
 
-# Plan-based points multipliers — power users earn more
-PLAN_MULTIPLIERS = {
-    "free": 1,
-    "pro": 3,
-}
+# Contribution-tier multipliers — the more you contribute, the faster you earn.
+# This rewards active contributors, not paying customers.
+CONTRIBUTION_TIERS = [
+    (500, 3),    # 500+ points → 3x multiplier
+    (100, 2),    # 100-499 points → 2x multiplier
+    (0,   1),    # 0-99 points → 1x (base rate)
+]
 
 
-def get_points_multiplier(user_plan: str = None) -> int:
-    """Get the points multiplier for a user's plan. Pro users earn 3x."""
-    return PLAN_MULTIPLIERS.get(user_plan or "free", 1)
+def get_points_multiplier(entity_type: str = None, entity_id: str = None) -> int:
+    """Get the points multiplier based on contributor's total points.
+
+    The more you contribute, the faster you earn — earn-to-earn, not pay-to-earn.
+    Tiers: 0-99 pts = 1x, 100-499 = 2x, 500+ = 3x.
+    """
+    if not entity_type or not entity_id:
+        return 1
+    points = db_get_points(entity_type, entity_id)
+    total = points.get("total_points", 0) if points else 0
+    for threshold, multiplier in CONTRIBUTION_TIERS:
+        if total >= threshold:
+            return multiplier
+    return 1
 
 
 # ==================== ENDPOINTS ====================
@@ -133,5 +146,5 @@ async def platform_stats():
         "total_contributors": len(top),
         "total_points_distributed": total_points,
         "points_schedule": POINTS_SCHEDULE,
-        "plan_multipliers": PLAN_MULTIPLIERS,
+        "contribution_tiers": {str(t): f"{m}x" for t, m in CONTRIBUTION_TIERS},
     }
