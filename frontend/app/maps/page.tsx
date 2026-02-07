@@ -86,6 +86,15 @@ interface Layer {
   radius?: number
 }
 
+
+interface SavedMap {
+  id: string
+  title: string
+  url: string
+  created_at: string
+  views: number
+}
+
 export default function MapsPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const [demoLoaded, setDemoLoaded] = useState(false)
@@ -94,10 +103,120 @@ export default function MapsPage() {
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<string>("dark")
   const [layers, setLayers] = useState<Layer[]>([])
-  const [activePanel, setActivePanel] = useState<"layers" | "add" | null>("add")
+  const [activePanel, setActivePanel] = useState<"layers" | "add" | "history" | null>("add")
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Save & Share state
+  const [showSaveModal, setShowSaveModal] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [savedUrl, setSavedUrl] = useState<string | null>(null)
+  const [savedMapId, setSavedMapId] = useState<string | null>(null)
+  const [email, setEmail] = useState("")
+  const [mapTitle, setMapTitle] = useState("")
+  const [copiedLink, setCopiedLink] = useState(false)
+
+  // Error toast state
+  const [errorToast, setErrorToast] = useState<string | null>(null)
+
+  // My Maps history state
+  const [myMaps, setMyMaps] = useState<SavedMap[]>([])
+  const [loadingMyMaps, setLoadingMyMaps] = useState(false)
+  const [myMapsError, setMyMapsError] = useState<string | null>(null)
+
+  // Load stored email on mount
+  useEffect(() => {
+    const storedEmail = localStorage.getItem("spatix_save_email")
+    if (storedEmail) setEmail(storedEmail)
+  }, [])
+
+  // Auto-dismiss error toast
+  useEffect(() => {
+    if (!errorToast) return
+    const t = setTimeout(() => setErrorToast(null), 5000)
+    return () => clearTimeout(t)
+  }, [errorToast])
+
+  // Fetch my maps when history tab is opened
+  const fetchMyMaps = useCallback(async () => {
+    const storedEmail = localStorage.getItem("spatix_save_email")
+    if (!storedEmail) {
+      setMyMaps([])
+      return
+    }
+    setLoadingMyMaps(true)
+    setMyMapsError(null)
+    try {
+      const res = await fetch(\`\${API_URL}/api/maps/by-email?email=\${encodeURIComponent(storedEmail)}\`)
+      if (res.ok) {
+        const data = await res.json()
+        setMyMaps(data.maps || [])
+      } else {
+        setMyMapsError("Could not load your maps")
+      }
+    } catch {
+      setMyMapsError("Connection failed. Check your network.")
+    } finally {
+      setLoadingMyMaps(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activePanel === "history") fetchMyMaps()
+  }, [activePanel, fetchMyMaps])
+
+  // Save map to backend with email
+  const handleSaveMap = async () => {
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return
+    if (layers.length === 0) return
+
+    setSaving(true)
+    try {
+      const allFeatures = layers
+        .filter(l => l.visible)
+        .flatMap(l => l.data?.features || [])
+      const mergedGeojson = { type: "FeatureCollection", features: allFeatures }
+
+      const res = await fetch(\`\${API_URL}/api/map\`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: mergedGeojson,
+          title: mapTitle || "Untitled Map",
+          style: basemap === "dark" ? "dark" : basemap === "satellite" ? "satellite" : "light",
+          email: email.trim().toLowerCase(),
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        const msg = errData?.detail?.message || errData?.detail || "Server error"
+        throw new Error(msg)
+      }
+      const data = await res.json()
+
+      localStorage.setItem("spatix_save_email", email.trim().toLowerCase())
+      setSavedUrl(data.url)
+      setSavedMapId(data.id)
+      setShowSaveModal(false)
+      setShowShareModal(true)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error"
+      setErrorToast(\`Failed to save map: \${message}\`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const copyShareLink = () => {
+    if (savedUrl) {
+      navigator.clipboard.writeText(savedUrl)
+      setCopiedLink(true)
+      setTimeout(() => setCopiedLink(false), 2000)
+    }
+  }
 
   // Build deck.gl layers
   const deckLayers = useMemo(() => {
@@ -533,6 +652,16 @@ export default function MapsPage() {
           >
             Add Data
           </button>
+          <button
+            onClick={() => setActivePanel("history")}
+            className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition-all ${
+              activePanel === "history" 
+                ? "text-white bg-[#3a4552] border-b-2 border-[#6b5ce7]" 
+                : "text-[#6a7485] hover:text-white hover:bg-[#3a4552]/50"
+            }`}
+          >
+            My Maps
+          </button>
         </div>
 
         {/* Content */}
@@ -710,6 +839,43 @@ export default function MapsPage() {
               </div>
             </div>
           )}
+
+          {/* My Maps panel */}
+          {activePanel === "history" && (
+            <div className="p-4">
+              {loadingMyMaps ? (
+                <div className="flex justify-center py-12">
+                  <div className="w-8 h-8 rounded-full border-4 border-[#6b5ce7] border-t-transparent animate-spin" />
+                </div>
+              ) : myMapsError ? (
+                <div className="text-center py-12">
+                  <p className="text-red-400 text-sm mb-3">{myMapsError}</p>
+                  <button onClick={fetchMyMaps} className="text-[#6b5ce7] text-sm font-semibold">Retry</button>
+                </div>
+              ) : myMaps.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-[#3a4552] rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl opacity-50">🗺️</span>
+                  </div>
+                  <p className="text-[#6a7485] text-sm font-medium">No saved maps yet</p>
+                  <p className="text-[#6a7485] text-xs mt-2">Save a map to see it here</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {myMaps.map(m => (
+                    <a
+                      key={m.id}
+                      href={m.url}
+                      className="block p-4 bg-[#3a4552] rounded-xl hover:bg-[#424d5c] transition-all"
+                    >
+                      <p className="text-white text-sm font-semibold truncate">{m.title}</p>
+                      <p className="text-[#6a7485] text-xs mt-1">{m.views} views • {new Date(m.created_at).toLocaleDateString()}</p>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Basemap */}
@@ -721,10 +887,99 @@ export default function MapsPage() {
             ))}
           </div>
         </div>
+
+        {/* Save & Share button */}
+        {layers.length > 0 && (
+          <div className="px-4 pb-4">
+            <button
+              onClick={() => setShowSaveModal(true)}
+              className="w-full py-3 bg-[#6b5ce7] hover:bg-[#5a4bd6] text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#6b5ce7]/25"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+              Save & Share
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Map */}
       <div ref={mapContainer} className="flex-1" />
+
+      {/* Error Toast */}
+      {errorToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60]">
+          <div className="bg-red-900/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 max-w-md">
+            <svg className="w-5 h-5 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <p className="text-sm font-medium flex-1">{errorToast}</p>
+            <button onClick={() => setErrorToast(null)} className="text-red-300 hover:text-white ml-2">✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* Save Modal */}
+      {showSaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#29323c] rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-1">Save & Share Your Map</h3>
+              <p className="text-[#6a7485] text-sm mb-6">Enter your email to save and get a shareable link.</p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Map Title</label>
+                  <input type="text" value={mapTitle} onChange={(e) => setMapTitle(e.target.value)} placeholder="My Map" className="w-full px-4 py-3 bg-[#242730] border border-[#3a4552] rounded-xl text-white placeholder-[#6a7485] text-sm focus:outline-none focus:border-[#6b5ce7]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#6a7485] uppercase tracking-wider mb-2">Email</label>
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="w-full px-4 py-3 bg-[#242730] border border-[#3a4552] rounded-xl text-white placeholder-[#6a7485] text-sm focus:outline-none focus:border-[#6b5ce7]" onKeyDown={(e) => e.key === "Enter" && handleSaveMap()} />
+                  <p className="text-[#6a7485] text-xs mt-2">We'll use this to let you find your maps later.</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 p-6 pt-0">
+              <button onClick={() => setShowSaveModal(false)} className="flex-1 py-3 border border-[#3a4552] text-[#6a7485] rounded-xl font-medium hover:bg-[#3a4552] hover:text-white transition-colors">Cancel</button>
+              <button onClick={handleSaveMap} disabled={saving || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)} className="flex-1 py-3 bg-[#6b5ce7] text-white rounded-xl font-semibold hover:bg-[#5a4bd6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {saving ? <><div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />Saving...</> : "Save & Get Link"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Success Modal */}
+      {showShareModal && savedUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="p-6">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-1">Map saved!</h3>
+                <p className="text-slate-500 text-sm">Your map is ready to share</p>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-4 mb-4">
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Share URL</label>
+                <div className="flex gap-2">
+                  <input type="text" value={savedUrl} readOnly className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-mono text-slate-700 truncate" />
+                  <button onClick={copyShareLink} className={`px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${copiedLink ? "bg-green-100 text-green-700" : "bg-slate-900 text-white hover:bg-slate-800"}`}>
+                    {copiedLink ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <a href={savedUrl} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 text-center transition-colors">View Map</a>
+                <button onClick={() => { setShowShareModal(false); setSavedUrl(null); setSavedMapId(null); }} className="flex-1 py-3 border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors">Keep Editing</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
