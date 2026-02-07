@@ -18,7 +18,7 @@ export default function LoginPage() {
     const token = await user.getIdToken()
     localStorage.setItem('spatix_token', token)
     localStorage.setItem('spatix_session', token)
-    window.location.href = '/'
+    window.location.href = '/maps'
   }
 
   const handleGoogleLogin = async () => {

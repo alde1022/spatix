@@ -20,14 +20,14 @@ function CallbackContent() {
         localStorage.setItem('spatix_token', token)
       }
 
-      // Get redirect URL or default to /account
+      // Get redirect URL or default to /maps
       // Validate redirect URL to prevent open redirect
-      let redirect = localStorage.getItem('spatix_redirect') || '/account'
+      let redirect = localStorage.getItem('spatix_redirect') || '/maps'
       localStorage.removeItem('spatix_redirect')
 
       // Only allow relative URLs starting with /
       if (!redirect.startsWith('/') || redirect.startsWith('//')) {
-        redirect = '/account'
+        redirect = '/maps'
       }
 
       // Redirect
