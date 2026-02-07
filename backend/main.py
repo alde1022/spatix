@@ -290,29 +290,74 @@ async def analyze(
         # Handle CSV files specially
         if file_path.lower().endswith(".csv"):
             import pandas as pd
+            from shapely import wkt as shapely_wkt
+            from shapely.geometry import shape as shapely_shape
             df = pd.read_csv(file_path, low_memory=False)
-            lat_cols = ["LATITUDE", "latitude", "lat", "Latitude", "LAT", "y", "Y"]
-            lng_cols = ["LONGITUDE", "longitude", "lng", "lon", "long", "Longitude", "LNG", "LON", "LONG", "x", "X"]
-            lat_col = next((c for c in lat_cols if c in df.columns), None)
-            lng_col = next((c for c in lng_cols if c in df.columns), None)
-            if lat_col and lng_col:
-                df = df.dropna(subset=[lat_col, lng_col])
-                df = df[pd.to_numeric(df[lat_col], errors="coerce").notna()]
-                df = df[pd.to_numeric(df[lng_col], errors="coerce").notna()]
-                df[lat_col] = pd.to_numeric(df[lat_col])
-                df[lng_col] = pd.to_numeric(df[lng_col])
-                df = df[(df[lat_col] >= -90) & (df[lat_col] <= 90)]
-                df = df[(df[lng_col] >= -180) & (df[lng_col] <= 180)]
-                # Drop columns that might have Inf/NaN issues
-                for col in df.columns:
-                    if df[col].dtype in ['float64', 'float32']:
-                        df[col] = df[col].replace([float('inf'), float('-inf')], None)
-                        df[col] = df[col].where(df[col].notna(), None)
-                if len(df) == 0:
-                    raise HTTPException(status_code=400, detail="No valid coordinates found in CSV")
-                gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lng_col], df[lat_col]), crs="EPSG:4326")
-            else:
-                raise HTTPException(status_code=400, detail=f"CSV needs lat/lng columns. Found: {list(df.columns)[:10]}")
+
+            # First check for WKT / GeoJSON geometry columns (enables polygons, lines, etc.)
+            geom_col_names = ["geometry", "geom", "wkt", "the_geom", "wkb_geometry", "shape", "geo", "geojson"]
+            geom_col = next((c for c in df.columns if c.lower() in geom_col_names), None)
+
+            if geom_col and df[geom_col].notna().any():
+                # Try to parse as WKT or GeoJSON geometry strings
+                sample = str(df[geom_col].dropna().iloc[0]).strip()
+                is_wkt = any(sample.upper().startswith(t) for t in ["POINT", "LINESTRING", "POLYGON", "MULTI", "GEOMETRYCOLLECTION"])
+                is_geojson = sample.startswith("{") and '"type"' in sample
+
+                geometries = []
+                valid_mask = []
+                if is_wkt:
+                    for val in df[geom_col]:
+                        try:
+                            geometries.append(shapely_wkt.loads(str(val)))
+                            valid_mask.append(True)
+                        except Exception:
+                            geometries.append(None)
+                            valid_mask.append(False)
+                elif is_geojson:
+                    for val in df[geom_col]:
+                        try:
+                            geometries.append(shapely_shape(json.loads(str(val))))
+                            valid_mask.append(True)
+                        except Exception:
+                            geometries.append(None)
+                            valid_mask.append(False)
+
+                if any(valid_mask):
+                    df = df[valid_mask].copy()
+                    df = df.drop(columns=[geom_col])
+                    gdf = gpd.GeoDataFrame(df, geometry=[g for g, v in zip(geometries, valid_mask) if v], crs="EPSG:4326")
+                    # Clean Inf/NaN in float columns
+                    for col in gdf.columns:
+                        if col != "geometry" and gdf[col].dtype in ['float64', 'float32']:
+                            gdf[col] = gdf[col].replace([float('inf'), float('-inf')], None)
+                            gdf[col] = gdf[col].where(gdf[col].notna(), None)
+                else:
+                    geom_col = None  # Fall through to lat/lng parsing
+
+            if geom_col is None or not any(valid_mask if geom_col else []):
+                # Fall back to lat/lng point parsing
+                lat_cols = ["LATITUDE", "latitude", "lat", "Latitude", "LAT", "y", "Y"]
+                lng_cols = ["LONGITUDE", "longitude", "lng", "lon", "long", "Longitude", "LNG", "LON", "LONG", "x", "X"]
+                lat_col = next((c for c in lat_cols if c in df.columns), None)
+                lng_col = next((c for c in lng_cols if c in df.columns), None)
+                if lat_col and lng_col:
+                    df = df.dropna(subset=[lat_col, lng_col])
+                    df = df[pd.to_numeric(df[lat_col], errors="coerce").notna()]
+                    df = df[pd.to_numeric(df[lng_col], errors="coerce").notna()]
+                    df[lat_col] = pd.to_numeric(df[lat_col])
+                    df[lng_col] = pd.to_numeric(df[lng_col])
+                    df = df[(df[lat_col] >= -90) & (df[lat_col] <= 90)]
+                    df = df[(df[lng_col] >= -180) & (df[lng_col] <= 180)]
+                    for col in df.columns:
+                        if df[col].dtype in ['float64', 'float32']:
+                            df[col] = df[col].replace([float('inf'), float('-inf')], None)
+                            df[col] = df[col].where(df[col].notna(), None)
+                    if len(df) == 0:
+                        raise HTTPException(status_code=400, detail="No valid coordinates found in CSV")
+                    gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lng_col], df[lat_col]), crs="EPSG:4326")
+                else:
+                    raise HTTPException(status_code=400, detail=f"CSV needs lat/lng or geometry columns. Found: {list(df.columns)[:10]}")
         else:
             gdf = gpd.read_file(file_path)
         
