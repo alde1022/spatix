@@ -296,7 +296,7 @@ async def analyze(
 
             # First check for WKT / GeoJSON geometry columns (enables polygons, lines, etc.)
             geom_col_names = ["geometry", "geom", "wkt", "the_geom", "wkb_geometry", "shape", "geo", "geojson"]
-            geom_col = next((c for c in df.columns if c.lower() in geom_col_names), None)
+            geom_col = next((c for c in df.columns if any(g in c.lower() for g in ["wkt", "geom", "geometry", "shape"])), None)
 
             if geom_col and df[geom_col].notna().any():
                 # Try to parse as WKT or GeoJSON geometry strings
