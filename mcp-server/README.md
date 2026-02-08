@@ -160,3 +160,8 @@ SPATIX_API_URL=http://localhost:8000 SPATIX_AGENT_ID=dev-agent python server.py
 ## License
 
 MIT
+
+## Also Available
+
+- **ClawHub Skill:** `clawhub install spatix` — for OpenClaw/Clawdbot agents
+- **Direct API:** No install needed, just call `https://api.spatix.io`
