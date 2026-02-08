@@ -1,10 +1,6 @@
 "use client"
 
-// Disable static prerendering - useSearchParams requires dynamic rendering
-export const dynamic = "force-dynamic"
-
-
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Navbar from "@/components/Navbar"
@@ -57,8 +53,8 @@ const ACTION_LABELS: Record<string, string> = {
   map_views_milestone_100: "Map reached 100 views",
   map_views_milestone_1000: "Map reached 1,000 views",
 }
-
-export default function DashboardPage() {
+// Inner component that uses useSearchParams
+function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialTab = (searchParams.get("tab") as Tab) || "maps"
@@ -417,5 +413,26 @@ export default function DashboardPage() {
         )}
       </main>
     </div>
+  )
+}
+
+// Loading fallback for Suspense
+function DashboardLoading() {
+  return (
+    <div className="min-h-screen bg-[#1a1d24]">
+      <Navbar />
+      <div className="flex items-center justify-center h-[60vh]">
+        <div className="w-12 h-12 rounded-full border-4 border-[#6b5ce7] border-t-transparent animate-spin" />
+      </div>
+    </div>
+  )
+}
+
+// Main page with Suspense boundary for useSearchParams
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<DashboardLoading />}>
+      <DashboardContent />
+    </Suspense>
   )
 }
