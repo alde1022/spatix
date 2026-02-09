@@ -782,14 +782,8 @@ async def list_my_maps(
     payload = require_auth(authorization)
     user_id = payload.get("sub")
     user_email = payload.get("email")
-    
-    # Debug logging
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"list_my_maps: user_id={user_id} (type={type(user_id).__name__}), email={user_email}")
 
     maps = get_user_maps(user_id, email=user_email, limit=limit, offset=offset)
-    logger.info(f"list_my_maps: found {len(maps)} maps")
     total = get_user_map_count(user_id, email=user_email)
 
     base_url = "https://spatix.io"
@@ -900,28 +894,3 @@ async def list_maps_by_email(request: Request, email: str, limit: int = 100, off
 
     return {"maps": map_items, "total": len(map_items)}
 
-
-@router.get("/maps/debug")
-async def debug_maps(authorization: str = Header(...)):
-    """Debug endpoint to trace map lookup."""
-    payload = require_auth(authorization)
-    user_id = payload.get("sub")
-    user_email = payload.get("email")
-    
-    # Get maps using both methods
-    maps_by_user_id = get_user_maps(user_id, limit=100)
-    maps_by_email = get_user_maps(user_id, email=user_email, limit=100) if user_email else []
-    
-    # Also get via the by-email endpoint logic
-    from database import get_maps_by_email
-    maps_email_only = get_maps_by_email(user_email) if user_email else []
-    
-    return {
-        "jwt_user_id": user_id,
-        "jwt_user_id_type": type(user_id).__name__,
-        "jwt_email": user_email,
-        "maps_by_user_id_only": len(maps_by_user_id),
-        "maps_by_user_id_or_email": len(maps_by_email),
-        "maps_by_email_only": len(maps_email_only),
-        "sample_map_ids": [m["id"] for m in maps_email_only[:3]] if maps_email_only else []
-    }
