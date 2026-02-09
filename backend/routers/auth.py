@@ -877,3 +877,104 @@ def get_current_user_from_token(request: Request) -> Optional[dict]:
         (payload["sub"],),
         fetch_one=True
     )
+
+
+# ============ Firebase Token Exchange ============
+
+_firebase_app = None
+
+def get_firebase_app():
+    """Initialize Firebase Admin SDK (lazy)."""
+    global _firebase_app
+    if _firebase_app:
+        return _firebase_app
+    
+    import base64
+    import json
+    import firebase_admin
+    from firebase_admin import credentials
+    
+    # Get service account from env
+    sa_base64 = os.environ.get("FIREBASE_SERVICE_ACCOUNT_BASE64")
+    if not sa_base64:
+        raise ValueError("FIREBASE_SERVICE_ACCOUNT_BASE64 not configured")
+    
+    sa_json = json.loads(base64.b64decode(sa_base64))
+    cred = credentials.Certificate(sa_json)
+    _firebase_app = firebase_admin.initialize_app(cred)
+    return _firebase_app
+
+
+class FirebaseTokenRequest(BaseModel):
+    token: str
+
+
+@router.post("/auth/firebase/exchange")
+async def exchange_firebase_token(req: FirebaseTokenRequest, response: Response):
+    """Exchange a Firebase ID token for a backend JWT."""
+    from firebase_admin import auth as firebase_auth
+    
+    try:
+        get_firebase_app()
+        
+        # Verify the Firebase token
+        decoded = firebase_auth.verify_id_token(req.token)
+        email = decoded.get("email")
+        firebase_uid = decoded.get("uid")
+        
+        if not email:
+            raise HTTPException(400, "Firebase token missing email")
+        
+        email = email.lower().strip()
+        
+        # Find or create user
+        user = db_execute(
+            "SELECT id, email, plan FROM users WHERE email = %s",
+            (email,),
+            fetch_one=True
+        )
+        
+        if not user:
+            # Create user (auto-verified since Firebase verified them)
+            with get_db() as conn:
+                if USE_POSTGRES:
+                    from psycopg2.extras import RealDictCursor
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute(
+                            """INSERT INTO users (email, email_verified, auth_provider, oauth_id, created_at)
+                               VALUES (%s, TRUE, 'firebase', %s, NOW()) RETURNING id, email""",
+                            (email, firebase_uid)
+                        )
+                        user = dict(cur.fetchone())
+                        user["plan"] = "free"
+                else:
+                    conn.execute(
+                        """INSERT INTO users (email, email_verified, auth_provider, oauth_id, created_at)
+                           VALUES (?, 1, 'firebase', ?, datetime('now'))""",
+                        (email, firebase_uid)
+                    )
+                    cur = conn.execute("SELECT id, email FROM users WHERE email = ?", (email,))
+                    row = cur.fetchone()
+                    user = {"id": row[0], "email": row[1], "plan": "free"}
+        
+        # Issue backend JWT
+        token = create_jwt(user["id"], user["email"], user.get("plan", "free"))
+        
+        # Set auth cookie
+        set_auth_cookie(response, token)
+        
+        return {
+            "token": token,
+            "user": {
+                "id": user["id"],
+                "email": user["email"],
+            }
+        }
+    
+    except firebase_auth.InvalidIdTokenError:
+        raise HTTPException(401, "Invalid Firebase token")
+    except firebase_auth.ExpiredIdTokenError:
+        raise HTTPException(401, "Firebase token expired")
+    except Exception as e:
+        logger.error(f"Firebase token exchange failed: {e}")
+        raise HTTPException(500, f"Token exchange failed: {str(e)}")
