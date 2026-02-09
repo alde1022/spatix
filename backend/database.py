@@ -539,65 +539,43 @@ def update_map(map_id: str, title: str = None, description: str = None,
             return cur.rowcount > 0
 
 
-def get_user_maps(user_id: int, email: str = None, limit: int = 50, offset: int = 0) -> list:
-    """Get all maps for a user (by user_id or creator_email)."""
+def get_user_maps(user_id: int, limit: int = 50, offset: int = 0) -> list:
+    """Get all maps for a user."""
     ensure_db_initialized()
 
     with get_db() as conn:
         if USE_POSTGRES:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                if email:
-                    cur.execute("""
-                        SELECT id, title, description, views, public, created_at, updated_at
-                        FROM maps WHERE user_id = %s OR creator_email = %s
-                        ORDER BY updated_at DESC
-                        LIMIT %s OFFSET %s
-                    """, (user_id, email, limit, offset))
-                else:
-                    cur.execute("""
-                        SELECT id, title, description, views, public, created_at, updated_at
-                        FROM maps WHERE user_id = %s
-                        ORDER BY updated_at DESC
-                        LIMIT %s OFFSET %s
-                    """, (user_id, limit, offset))
+                cur.execute("""
+                    SELECT id, title, description, views, public, created_at, updated_at
+                    FROM maps WHERE user_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT %s OFFSET %s
+                """, (user_id, limit, offset))
                 rows = cur.fetchall()
         else:
-            if email:
-                cur = conn.execute("""
-                    SELECT id, title, description, views, public, created_at, updated_at
-                    FROM maps WHERE user_id = ? OR creator_email = ?
-                    ORDER BY updated_at DESC
-                    LIMIT ? OFFSET ?
-                """, (user_id, email, limit, offset))
-            else:
-                cur = conn.execute("""
-                    SELECT id, title, description, views, public, created_at, updated_at
-                    FROM maps WHERE user_id = ?
-                    ORDER BY updated_at DESC
-                    LIMIT ? OFFSET ?
-                """, (user_id, limit, offset))
+            cur = conn.execute("""
+                SELECT id, title, description, views, public, created_at, updated_at
+                FROM maps WHERE user_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """, (user_id, limit, offset))
             rows = cur.fetchall()
 
     return [dict(row) for row in rows]
 
 
-def get_user_map_count(user_id: int, email: str = None) -> int:
-    """Get total map count for a user (by user_id or creator_email)."""
+def get_user_map_count(user_id: int) -> int:
+    """Get total map count for a user."""
     ensure_db_initialized()
 
     with get_db() as conn:
         if USE_POSTGRES:
             with conn.cursor() as cur:
-                if email:
-                    cur.execute("SELECT COUNT(*) FROM maps WHERE user_id = %s OR creator_email = %s", (user_id, email))
-                else:
-                    cur.execute("SELECT COUNT(*) FROM maps WHERE user_id = %s", (user_id,))
+                cur.execute("SELECT COUNT(*) FROM maps WHERE user_id = %s", (user_id,))
                 return cur.fetchone()[0]
         else:
-            if email:
-                cur = conn.execute("SELECT COUNT(*) FROM maps WHERE user_id = ? OR creator_email = ?", (user_id, email))
-            else:
-                cur = conn.execute("SELECT COUNT(*) FROM maps WHERE user_id = ?", (user_id,))
+            cur = conn.execute("SELECT COUNT(*) FROM maps WHERE user_id = ?", (user_id,))
             return cur.fetchone()[0]
 
 
