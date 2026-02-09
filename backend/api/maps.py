@@ -843,9 +843,10 @@ async def get_map_stats(authorization: str = Header(...)):
     """Get statistics about user's maps."""
     payload = require_auth(authorization)
     user_id = payload.get("sub")
+    user_email = payload.get("email")
 
-    total_maps = get_user_map_count(user_id)
-    maps = get_user_maps(user_id, limit=1000)  # Get all for stats
+    total_maps = get_user_map_count(user_id, email=user_email)
+    maps = get_user_maps(user_id, email=user_email, limit=1000)  # Get all for stats
 
     total_views = sum(m.get("views", 0) for m in maps)
     public_maps = sum(1 for m in maps if m.get("public"))
