@@ -87,7 +87,7 @@ export async function analyzeFile(
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Unknown error" }))
     const detail = error.detail
-    throw new Error(typeof detail === "string" ? detail : detail?.message || detail?.error || "Failed to analyze file")
+    throw new Error(typeof detail === "string" ? detail : Array.isArray(detail) ? detail[0]?.msg || "Validation error" : detail?.message || detail?.error || "Failed to analyze file")
   }
 
   return response.json()
@@ -106,7 +106,7 @@ export async function createMap(data: CreateMapRequest): Promise<CreateMapRespon
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Unknown error" }))
     const detail = error.detail
-    throw new Error(typeof detail === "string" ? detail : detail?.message || detail?.error || "Failed to create map")
+    throw new Error(typeof detail === "string" ? detail : Array.isArray(detail) ? detail[0]?.msg || "Validation error" : detail?.message || detail?.error || "Failed to create map")
   }
 
   return response.json()
@@ -138,6 +138,6 @@ export async function deleteMap(id: string): Promise<void> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Unknown error" }))
     const detail = error.detail
-    throw new Error(typeof detail === "string" ? detail : detail?.message || detail?.error || "Failed to delete map")
+    throw new Error(typeof detail === "string" ? detail : Array.isArray(detail) ? detail[0]?.msg || "Validation error" : detail?.message || detail?.error || "Failed to delete map")
   }
 }
