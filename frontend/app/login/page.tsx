@@ -1,14 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Suspense } from 'react'
 import { signInWithGoogle, signInWithGithub, signInWithEmail } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
 
 function LoginForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const { login: authLogin } = useAuth()
   const [email, setEmail] = useState('')
@@ -38,7 +37,8 @@ function LoginForm() {
 
       const data = await res.json()
       authLogin(data.user.email, data.token)
-      router.push(redirect)
+      // Full page reload ensures clean state on the destination page
+      window.location.href = redirect
     } catch (err: any) {
       setError(err.message || 'Authentication failed')
       setLoading(false)
