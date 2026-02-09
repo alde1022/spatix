@@ -1,22 +1,28 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { Suspense } from 'react'
 import { signInWithGoogle, signInWithGithub, signInWithEmail } from '@/lib/firebase'
+import { useAuth } from '@/contexts/AuthContext'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { login: authLogin } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const redirect = searchParams.get('redirect') || '/maps'
+
   const handleSuccess = async (user: any) => {
     try {
       const firebaseToken = await user.getIdToken()
-      
+
       // Exchange Firebase token for backend JWT
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.spatix.io'
       const res = await fetch(`${API_URL}/auth/firebase/exchange`, {
@@ -24,17 +30,15 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: firebaseToken }),
       })
-      
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Auth failed' }))
         throw new Error(err.detail || 'Failed to authenticate')
       }
-      
+
       const data = await res.json()
-      localStorage.setItem('spatix_email', data.user.email)
-      localStorage.setItem('spatix_token', data.token)
-      localStorage.setItem('spatix_session', data.token)
-      window.location.href = '/maps'
+      authLogin(data.user.email, data.token)
+      router.push(redirect)
     } catch (err: any) {
       setError(err.message || 'Authentication failed')
       setLoading(false)
@@ -213,5 +217,17 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   )
 }

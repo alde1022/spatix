@@ -1,24 +1,48 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { signInWithGoogle, signInWithGithub, signUpWithEmail } from '@/lib/firebase'
+import { useAuth } from '@/contexts/AuthContext'
 
-export default function SignupPage() {
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.spatix.io'
+
+function SignupForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { login: authLogin } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const redirect = searchParams.get('redirect') || '/maps'
+
   const handleSuccess = async (user: any) => {
-    localStorage.setItem('spatix_email', user.email)
-    const token = await user.getIdToken()
-    localStorage.setItem('spatix_token', token)
-    localStorage.setItem('spatix_session', token)
-    window.location.href = '/maps'
+    try {
+      const firebaseToken = await user.getIdToken()
+
+      // Exchange Firebase token for backend JWT
+      const res = await fetch(`${API_URL}/auth/firebase/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: firebaseToken }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Auth failed' }))
+        throw new Error(err.detail || 'Failed to authenticate')
+      }
+
+      const data = await res.json()
+      authLogin(data.user.email, data.token)
+      router.push(redirect)
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed')
+      setLoading(false)
+    }
   }
 
   const handleGoogleLogin = async () => {
@@ -48,17 +72,17 @@ export default function SignupPage() {
   const handleEmailSignup = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    
+
     if (password !== confirmPassword) {
       setError('Passwords do not match')
       return
     }
-    
+
     if (password.length < 6) {
       setError('Password must be at least 6 characters')
       return
     }
-    
+
     setLoading(true)
     try {
       const result = await signUpWithEmail(email, password)
@@ -202,5 +226,17 @@ export default function SignupPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+      </div>
+    }>
+      <SignupForm />
+    </Suspense>
   )
 }
