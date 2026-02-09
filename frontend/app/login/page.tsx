@@ -14,11 +14,31 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
 
   const handleSuccess = async (user: any) => {
-    localStorage.setItem('spatix_email', user.email)
-    const token = await user.getIdToken()
-    localStorage.setItem('spatix_token', token)
-    localStorage.setItem('spatix_session', token)
-    window.location.href = '/maps'
+    try {
+      const firebaseToken = await user.getIdToken()
+      
+      // Exchange Firebase token for backend JWT
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.spatix.io'
+      const res = await fetch(`${API_URL}/auth/firebase/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: firebaseToken }),
+      })
+      
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Auth failed' }))
+        throw new Error(err.detail || 'Failed to authenticate')
+      }
+      
+      const data = await res.json()
+      localStorage.setItem('spatix_email', data.user.email)
+      localStorage.setItem('spatix_token', data.token)
+      localStorage.setItem('spatix_session', data.token)
+      window.location.href = '/maps'
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed')
+      setLoading(false)
+    }
   }
 
   const handleGoogleLogin = async () => {
