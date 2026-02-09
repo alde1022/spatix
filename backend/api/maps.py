@@ -781,9 +781,10 @@ async def list_my_maps(
     """List all maps owned by the authenticated user."""
     payload = require_auth(authorization)
     user_id = payload.get("sub")
+    user_email = payload.get("email")
 
-    maps = get_user_maps(user_id, limit=limit, offset=offset)
-    total = get_user_map_count(user_id)
+    maps = get_user_maps(user_id, email=user_email, limit=limit, offset=offset)
+    total = get_user_map_count(user_id, email=user_email)
 
     base_url = "https://spatix.io"
     map_items = [

@@ -106,7 +106,15 @@ function DashboardContent() {
     if (!user || tab !== "maps") return
     setMapsLoading(true)
     Promise.all([
-      fetch(`${API_URL}/api/maps/me`, { headers: authHeaders() }).then(r => r.ok ? r.json() : { maps: [] }),
+      fetch(`${API_URL}/api/maps/me`, { headers: authHeaders() }).then(r => {
+        if (r.status === 401) {
+          localStorage.removeItem("spatix_token")
+          localStorage.removeItem("spatix_email")
+          router.push("/login?redirect=/dashboard")
+          return { maps: [] }
+        }
+        return r.ok ? r.json() : { maps: [] }
+      }),
       fetch(`${API_URL}/api/maps/stats`, { headers: authHeaders() }).then(r => r.ok ? r.json() : { total_maps: 0, total_views: 0 }),
     ]).then(([mapsData, stats]) => {
       setMaps(mapsData.maps || [])
