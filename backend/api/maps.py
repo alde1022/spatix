@@ -891,3 +891,15 @@ async def list_maps_by_email(request: Request, email: str, limit: int = 100, off
     ]
 
     return {"maps": map_items, "total": len(map_items)}
+
+
+@router.get("/maps/test")
+async def test_maps_auth(authorization: str = Header(...)):
+    """Test endpoint for debugging."""
+    try:
+        payload = require_auth(authorization)
+        return {"status": "ok", "user_id": payload.get("sub"), "email": payload.get("email")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
