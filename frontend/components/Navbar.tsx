@@ -1,28 +1,18 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
 
 export default function Navbar() {
   const router = useRouter()
   const pathname = usePathname()
-  const [user, setUser] = useState<{ email: string } | null>(null)
+  const { user, logout } = useAuth()
   const [showMenu, setShowMenu] = useState(false)
 
-  useEffect(() => {
-    const email = localStorage.getItem('spatix_email')
-    const token = localStorage.getItem('spatix_token')
-    if (email && token) {
-      setUser({ email })
-    }
-  }, [])
-
   const handleLogout = () => {
-    localStorage.removeItem('spatix_email')
-    localStorage.removeItem('spatix_token')
-    localStorage.removeItem('spatix_session')
-    setUser(null)
+    logout()
     setShowMenu(false)
     router.push('/')
   }
@@ -37,9 +27,9 @@ export default function Navbar() {
         </div>
         <span className="font-bold text-xl text-slate-900">Spatix</span>
       </Link>
-      
+
       <div className="flex items-center gap-6">
-        <Link 
+        <Link
           href="/maps"
           className={`text-sm font-medium transition-colors ${isActive('/maps') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
         >
@@ -51,7 +41,7 @@ export default function Navbar() {
         >
           Developers
         </Link>
-        
+
         {user ? (
           <div className="relative">
             <button
@@ -65,7 +55,7 @@ export default function Navbar() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-            
+
             {showMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
