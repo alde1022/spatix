@@ -200,17 +200,30 @@ export default function MapsPage() {
     setMyMapsError(null)
     try {
       // Prefer authenticated endpoint if token is available
-      const res = token
+      let res = token
         ? await fetch(`${API_URL}/api/maps/me`, { headers: { Authorization: `Bearer ${token}` } })
-        : await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail!)}`)
-      if (res.ok) {
+        : null
+      // If authenticated request failed (expired token etc.), fall back to email lookup
+      if (res && !res.ok && storedEmail) {
+        res = await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail)}`)
+      } else if (!res && storedEmail) {
+        res = await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail)}`)
+      }
+      if (!res) {
+        setMyMaps([])
+      } else if (res.ok) {
         const data = await res.json()
         setMyMaps(data.maps || [])
       } else {
-        setMyMapsError("Could not load your maps")
+        const errData = await res.json().catch(() => null)
+        const detail = errData?.detail
+        const msg = typeof detail === "string" ? detail
+          : Array.isArray(detail) ? detail[0]?.msg || "Server error"
+          : detail?.message || detail?.error || "Could not load your maps"
+        setMyMapsError(msg)
       }
-    } catch {
-      setMyMapsError("Connection failed. Check your network.")
+    } catch (err) {
+      setMyMapsError(err instanceof TypeError ? "Connection failed. Check your network." : "Could not load your maps")
     } finally {
       setLoadingMyMaps(false)
     }
@@ -265,7 +278,9 @@ export default function MapsPage() {
       if (!res.ok) {
         const errData = await res.json().catch(() => null)
         const detail = errData?.detail
-        const msg = typeof detail === "string" ? detail : detail?.message || detail?.error || "Server error"
+        const msg = typeof detail === "string" ? detail
+          : Array.isArray(detail) ? detail[0]?.msg || "Validation error"
+          : detail?.message || detail?.error || "Server error"
         throw new Error(msg)
       }
       const data = await res.json()

@@ -43,7 +43,7 @@ function ResetPasswordContent() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         const detail = data.detail
-        throw new Error(typeof detail === 'string' ? detail : detail?.message || detail?.error || 'Failed to reset password')
+        throw new Error(typeof detail === 'string' ? detail : Array.isArray(detail) ? detail[0]?.msg || 'Validation error' : detail?.message || detail?.error || 'Failed to reset password')
       }
 
       setSuccess(true)

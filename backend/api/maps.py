@@ -85,7 +85,7 @@ class MapRequest(BaseModel):
     markers: Optional[List[Marker]] = None
     bounds: Optional[Union[Literal["auto"], List[List[float]]]] = "auto"
     center: Optional[List[float]] = None
-    zoom: Optional[int] = None
+    zoom: Optional[float] = None
     # Email for save-gated flow (anonymous users)
     email: Optional[str] = None
     # Custom layer styling from frontend
