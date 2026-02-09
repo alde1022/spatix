@@ -909,7 +909,7 @@ class FirebaseTokenRequest(BaseModel):
     token: str
 
 
-@router.post("/auth/firebase/exchange")
+@router.post("/firebase/exchange")
 async def exchange_firebase_token(req: FirebaseTokenRequest, response: Response):
     """Exchange a Firebase ID token for a backend JWT."""
     from firebase_admin import auth as firebase_auth

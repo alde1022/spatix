@@ -9,6 +9,20 @@ const nextConfig = {
       },
     ],
   },
+  // Allow Firebase signInWithPopup to communicate back to the parent window
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Cross-Origin-Opener-Policy',
+            value: 'same-origin-allow-popups',
+          },
+        ],
+      },
+    ];
+  },
   // Fix Firebase/undici webpack compatibility
   transpilePackages: ['undici', '@firebase/auth', 'firebase'],
   webpack: (config) => {
