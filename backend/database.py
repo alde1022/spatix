@@ -541,6 +541,9 @@ def update_map(map_id: str, title: str = None, description: str = None,
 
 def get_user_maps(user_id: int, email: str = None, limit: int = 50, offset: int = 0) -> list:
     """Get all maps for a user (by user_id or creator_email)."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"get_user_maps: user_id={user_id}, email={email}")
     ensure_db_initialized()
 
     with get_db() as conn:

@@ -782,8 +782,14 @@ async def list_my_maps(
     payload = require_auth(authorization)
     user_id = payload.get("sub")
     user_email = payload.get("email")
+    
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"list_my_maps: user_id={user_id} (type={type(user_id).__name__}), email={user_email}")
 
     maps = get_user_maps(user_id, email=user_email, limit=limit, offset=offset)
+    logger.info(f"list_my_maps: found {len(maps)} maps")
     total = get_user_map_count(user_id, email=user_email)
 
     base_url = "https://spatix.io"
