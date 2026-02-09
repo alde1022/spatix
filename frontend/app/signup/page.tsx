@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { signInWithGoogle, signInWithGithub, signUpWithEmail } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -9,7 +9,6 @@ import { useAuth } from '@/contexts/AuthContext'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.spatix.io'
 
 function SignupForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const { login: authLogin } = useAuth()
   const [email, setEmail] = useState('')
@@ -38,7 +37,7 @@ function SignupForm() {
 
       const data = await res.json()
       authLogin(data.user.email, data.token)
-      router.push(redirect)
+      window.location.href = redirect
     } catch (err: any) {
       setError(err.message || 'Authentication failed')
       setLoading(false)

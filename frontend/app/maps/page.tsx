@@ -338,14 +338,22 @@ export default function MapsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: firebaseToken }),
       })
-      if (!res.ok) throw new Error("Auth failed")
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Auth exchange failed" }))
+        throw new Error(errData.detail || `Exchange failed (${res.status})`)
+      }
       const data = await res.json()
       authLogin(data.user.email, data.token)
       setEmail(data.user.email)
       setShowAuthPrompt(false)
       setShowSaveModal(true)
-    } catch (err) {
-      setErrorToast("Sign in failed. Please try again.")
+    } catch (err: any) {
+      const msg = err?.code === "auth/popup-closed-by-user"
+        ? "Sign-in popup was closed"
+        : err?.code === "auth/popup-blocked"
+        ? "Popup was blocked by browser. Please allow popups for this site."
+        : err?.message || "Sign in failed. Please try again."
+      setErrorToast(msg)
     } finally {
       setAuthLoading(false)
     }
@@ -361,14 +369,22 @@ export default function MapsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: firebaseToken }),
       })
-      if (!res.ok) throw new Error("Auth failed")
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Auth exchange failed" }))
+        throw new Error(errData.detail || `Exchange failed (${res.status})`)
+      }
       const data = await res.json()
       authLogin(data.user.email, data.token)
       setEmail(data.user.email)
       setShowAuthPrompt(false)
       setShowSaveModal(true)
-    } catch (err) {
-      setErrorToast("Sign in failed. Please try again.")
+    } catch (err: any) {
+      const msg = err?.code === "auth/popup-closed-by-user"
+        ? "Sign-in popup was closed"
+        : err?.code === "auth/popup-blocked"
+        ? "Popup was blocked by browser. Please allow popups for this site."
+        : err?.message || "Sign in failed. Please try again."
+      setErrorToast(msg)
     } finally {
       setAuthLoading(false)
     }
