@@ -899,22 +899,30 @@ async def list_maps_by_email(request: Request, email: str, limit: int = 100, off
 async def list_users(secret: str = None):
     """List all users (requires admin secret)."""
     import os
-    admin_secret = os.environ.get("JWT_SECRET", "")[:16]  # Use first 16 chars of JWT secret
+    admin_secret = os.environ.get("JWT_SECRET", "")[:16]
     if secret != admin_secret:
         raise HTTPException(status_code=403, detail="Invalid admin secret")
     
     from database import get_db, USE_POSTGRES
+    result = {"users": [], "tables": [], "emails_collected": []}
+    
     with get_db() as conn:
         if USE_POSTGRES:
             from psycopg2.extras import RealDictCursor
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT id, email, email_verified, auth_provider, created_at 
-                    FROM users ORDER BY created_at DESC LIMIT 50
-                """)
-                users = cur.fetchall()
-        else:
-            cur = conn.execute("SELECT id, email, email_verified, auth_provider, created_at FROM users ORDER BY created_at DESC LIMIT 50")
-            users = [dict(row) for row in cur.fetchall()]
+                # List all tables
+                cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                result["tables"] = [r["tablename"] for r in cur.fetchall()]
+                
+                # Get users
+                cur.execute("SELECT id, email, email_verified, auth_provider, created_at FROM users ORDER BY created_at DESC LIMIT 50")
+                result["users"] = [dict(u) for u in cur.fetchall()]
+                
+                # Check collected_emails table if exists
+                if "collected_emails" in result["tables"]:
+                    cur.execute("SELECT email, source, created_at FROM collected_emails ORDER BY created_at DESC LIMIT 50")
+                    result["emails_collected"] = [dict(e) for e in cur.fetchall()]
     
-    return {"users": [dict(u) for u in users], "total": len(users)}
+    result["total_users"] = len(result["users"])
+    result["total_emails"] = len(result["emails_collected"])
+    return result
