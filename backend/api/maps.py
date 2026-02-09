@@ -841,28 +841,21 @@ async def update_map(
 @router.get("/maps/stats")
 async def get_map_stats(authorization: str = Header(...)):
     """Get statistics about user's maps."""
-    try:
-        payload = require_auth(authorization)
-        user_id = payload.get("sub")
-        user_email = payload.get("email")
+    payload = require_auth(authorization)
+    user_id = payload.get("sub")
 
-        total_maps = get_user_map_count(user_id, email=user_email)
-        maps = get_user_maps(user_id, email=user_email, limit=1000)  # Get all for stats
+    total_maps = get_user_map_count(user_id)
+    maps = get_user_maps(user_id, limit=1000)  # Get all for stats
 
-        total_views = sum(m.get("views", 0) for m in maps)
-        public_maps = sum(1 for m in maps if m.get("public"))
+    total_views = sum(m.get("views", 0) for m in maps)
+    public_maps = sum(1 for m in maps if m.get("public"))
 
-        return {
-            "total_maps": total_maps,
-            "total_views": total_views,
-            "public_maps": public_maps,
-            "private_maps": total_maps - public_maps
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        return {"error": str(e), "traceback": traceback.format_exc()}
+    return {
+        "total_maps": total_maps,
+        "total_views": total_views,
+        "public_maps": public_maps,
+        "private_maps": total_maps - public_maps
+    }
 
 
 @router.get("/maps/by-email")
@@ -899,4 +892,3 @@ async def list_maps_by_email(request: Request, email: str, limit: int = 100, off
     ]
 
     return {"maps": map_items, "total": len(map_items)}
-
