@@ -893,3 +893,28 @@ async def list_maps_by_email(request: Request, email: str, limit: int = 100, off
     return {"maps": map_items, "total": len(map_items)}
 
 
+
+
+@router.get("/admin/users")
+async def list_users(secret: str = None):
+    """List all users (requires admin secret)."""
+    import os
+    admin_secret = os.environ.get("JWT_SECRET", "")[:16]  # Use first 16 chars of JWT secret
+    if secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    
+    from database import get_db, USE_POSTGRES
+    with get_db() as conn:
+        if USE_POSTGRES:
+            from psycopg2.extras import RealDictCursor
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, email, email_verified, auth_provider, created_at 
+                    FROM users ORDER BY created_at DESC LIMIT 50
+                """)
+                users = cur.fetchall()
+        else:
+            cur = conn.execute("SELECT id, email, email_verified, auth_provider, created_at FROM users ORDER BY created_at DESC LIMIT 50")
+            users = [dict(row) for row in cur.fetchall()]
+    
+    return {"users": [dict(u) for u in users], "total": len(users)}
