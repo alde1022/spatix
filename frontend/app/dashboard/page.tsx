@@ -90,7 +90,7 @@ function DashboardContent() {
     fetch(`${API_URL}/api/contributions/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(r => r.ok ? r.json() : { points: {} })
+      .then(r => r.ok ? r.json() : { points: null })
       .then(data => {
         if (data.points) setPoints(data.points)
       })
@@ -341,7 +341,7 @@ function DashboardContent() {
                 <p className="text-xs text-slate-500 mt-1">Queries Served</p>
               </div>
               <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
-                <p className="text-xl font-bold text-slate-900">{points.total_map_views.toLocaleString()}</p>
+                <p className="text-xl font-bold text-slate-900">{(points.total_map_views ?? 0).toLocaleString()}</p>
                 <p className="text-xs text-slate-500 mt-1">Map Views</p>
               </div>
             </div>
