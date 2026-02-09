@@ -264,7 +264,8 @@ export default function MapsPage() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => null)
-        const msg = errData?.detail?.message || errData?.detail || "Server error"
+        const detail = errData?.detail
+        const msg = typeof detail === "string" ? detail : detail?.message || detail?.error || "Server error"
         throw new Error(msg)
       }
       const data = await res.json()

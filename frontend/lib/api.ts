@@ -86,7 +86,8 @@ export async function analyzeFile(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Unknown error" }))
-    throw new Error(error.detail || "Failed to analyze file")
+    const detail = error.detail
+    throw new Error(typeof detail === "string" ? detail : detail?.message || detail?.error || "Failed to analyze file")
   }
 
   return response.json()
@@ -104,7 +105,8 @@ export async function createMap(data: CreateMapRequest): Promise<CreateMapRespon
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Unknown error" }))
-    throw new Error(error.detail || "Failed to create map")
+    const detail = error.detail
+    throw new Error(typeof detail === "string" ? detail : detail?.message || detail?.error || "Failed to create map")
   }
 
   return response.json()
@@ -135,6 +137,7 @@ export async function deleteMap(id: string): Promise<void> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Unknown error" }))
-    throw new Error(error.detail || "Failed to delete map")
+    const detail = error.detail
+    throw new Error(typeof detail === "string" ? detail : detail?.message || detail?.error || "Failed to delete map")
   }
 }
