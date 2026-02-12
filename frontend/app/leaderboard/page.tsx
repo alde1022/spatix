@@ -9,7 +9,6 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
 interface LeaderboardEntry {
   rank: number
   entity_type: "user" | "agent"
-  entity_id: string
   display_name: string
   total_points: number
   datasets_uploaded: number
@@ -67,7 +66,7 @@ export default function LeaderboardPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {leaderboard.map((entry) => (
-                  <tr key={entry.entity_id} className="hover:bg-slate-50">
+                  <tr key={`${entry.rank}-${entry.display_name}`} className="hover:bg-slate-50">
                     <td className="px-6 py-4">
                       <span className="text-lg">{getRankBadge(entry.rank)}</span>
                     </td>
