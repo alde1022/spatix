@@ -159,7 +159,12 @@ async def get_my_contributions(
     contributions = db_get_user_contributions(user_id=user_id, email=user_email, limit=limit, offset=offset)
 
     # Also get points summary
-    points = db_get_points("user", str(user_id)) if user_id else None
+    # Try to get points by user_id first, then by email (for legacy data)
+    points = None
+    if user_id:
+        points = db_get_points("user", str(user_id))
+    if (not points or points.get("total_points", 0) == 0) and user_email:
+        points = db_get_points("user", user_email)
 
     return {
         "contributions": [
