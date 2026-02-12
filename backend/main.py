@@ -433,3 +433,17 @@ async def debug_db_state():
                 result["maps"] = [dict(r) for r in cur.fetchall()]
     
     return result
+
+@app.post("/debug/assign-orphan-maps")
+async def assign_orphan_maps(user_id: int = 1):
+    """Assign all maps with null user_id to specified user. REMOVE AFTER USE."""
+    from database import get_db, USE_POSTGRES
+    
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE maps SET user_id = %s WHERE user_id IS NULL", (user_id,))
+                count = cur.rowcount
+            conn.commit()
+    
+    return {"assigned": count, "to_user_id": user_id}
