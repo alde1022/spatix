@@ -120,10 +120,10 @@ def create_jwt(user_id: int, email: str, plan: str = "free") -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def verify_jwt(token: str) -> Optional[dict]:
-    logger.info(f"verify_jwt: SECRET={JWT_SECRET[:20]}... token={token[:50]}...")
+    print(f"verify_jwt: SECRET={JWT_SECRET[:20]}... token={token[:50]}...")
     try:
         result = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        logger.info(f"verify_jwt: SUCCESS sub={result.get('sub')}")
+        print(f"verify_jwt: SUCCESS sub={result.get('sub')}")
         return result
     except Exception as e:
         logger.warning(f"verify_jwt: FAILED {type(e).__name__}: {e}")
