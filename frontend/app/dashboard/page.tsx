@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Navbar from "@/components/Navbar"
+import { useAuth } from "@/contexts/AuthContext"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.spatix.io"
 
@@ -57,9 +58,9 @@ const ACTION_LABELS: Record<string, string> = {
 function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user: authUser, isLoggedIn, logout } = useAuth()
   const initialTab = (searchParams.get("tab") as Tab) || "maps"
   const [tab, setTab] = useState<Tab>(initialTab)
-  const [user, setUser] = useState<{ email: string; token: string } | null>(null)
   const [loading, setLoading] = useState(true)
 
   // Maps state
@@ -76,88 +77,94 @@ function DashboardContent() {
   const [points, setPoints] = useState<PointsSummary>({ total_points: 0, datasets_uploaded: 0, maps_created: 0, data_queries_served: 0, total_map_views: 0 })
   const [activityLoading, setActivityLoading] = useState(false)
 
+  // Redirect to login if not authenticated (after AuthContext has initialized)
   useEffect(() => {
-    const email = localStorage.getItem("spatix_email")
-    const token = localStorage.getItem("spatix_token")
-    if (!email || !token) {
-      router.push("/login?redirect=/dashboard")
-      return
-    }
-    setUser({ email, token })
-    setLoading(false)
+    // AuthContext starts with user=null and sets it async,
+    // so wait a tick before deciding the user isn't logged in.
+    const timeout = setTimeout(() => {
+      if (!authUser) {
+        router.push("/login?redirect=/dashboard")
+      } else {
+        setLoading(false)
+      }
+    }, 100)
+    return () => clearTimeout(timeout)
+  }, [authUser, router])
 
-    // Eagerly load points summary for the stats row
+  // Once user is confirmed, eagerly load points summary for the stats row
+  useEffect(() => {
+    if (!authUser) return
     fetch(`${API_URL}/api/contributions/me`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${authUser.token}` },
     })
-      .then(r => r.ok ? r.json() : { points: null })
+      .then(r => {
+        if (r.status === 401) { logout(); router.push("/login?redirect=/dashboard"); return { points: null } }
+        return r.ok ? r.json() : { points: null }
+      })
       .then(data => {
-        if (data.points) setPoints(data.points)
+        if (data?.points) setPoints(data.points)
       })
       .catch(() => {})
-  }, [router])
+  }, [authUser, logout, router])
 
   const authHeaders = useCallback((): Record<string, string> => {
-    return user?.token ? { Authorization: `Bearer ${user.token}` } : {}
-  }, [user])
+    return authUser?.token ? { Authorization: `Bearer ${authUser.token}` } : {}
+  }, [authUser])
+
+  /** Fetch wrapper that handles 401 by logging out and redirecting. */
+  const authFetch = useCallback(async (url: string, opts?: RequestInit) => {
+    const res = await fetch(url, { ...opts, headers: { ...opts?.headers, ...authHeaders() } })
+    if (res.status === 401) {
+      logout()
+      router.push("/login?redirect=/dashboard")
+    }
+    return res
+  }, [authHeaders, logout, router])
 
   // Fetch maps
   useEffect(() => {
-    if (!user || tab !== "maps") return
+    if (!authUser || tab !== "maps") return
     setMapsLoading(true)
     Promise.all([
-      fetch(`${API_URL}/api/maps/me`, { headers: authHeaders() }).then(r => {
-        if (r.status === 401) {
-          localStorage.removeItem("spatix_token")
-          localStorage.removeItem("spatix_email")
-          router.push("/login?redirect=/dashboard")
-          return { maps: [] }
-        }
-        return r.ok ? r.json() : { maps: [] }
-      }),
-      fetch(`${API_URL}/api/maps/stats`, { headers: authHeaders() }).then(r => r.ok ? r.json() : { total_maps: 0, total_views: 0 }),
+      authFetch(`${API_URL}/api/maps/me`).then(r => r.ok ? r.json() : { maps: [] }),
+      authFetch(`${API_URL}/api/maps/stats`).then(r => r.ok ? r.json() : { total_maps: 0, total_views: 0 }),
     ]).then(([mapsData, stats]) => {
       setMaps(mapsData.maps || [])
       setMapStats(stats)
     }).finally(() => setMapsLoading(false))
-  }, [user, tab, authHeaders])
+  }, [authUser, tab, authFetch])
 
   // Fetch datasets
   useEffect(() => {
-    if (!user || tab !== "datasets") return
+    if (!authUser || tab !== "datasets") return
     setDatasetsLoading(true)
-    fetch(`${API_URL}/api/datasets/me`, { headers: authHeaders() })
+    authFetch(`${API_URL}/api/datasets/me`)
       .then(r => r.ok ? r.json() : { datasets: [] })
       .then(data => setDatasets(data.datasets || []))
       .finally(() => setDatasetsLoading(false))
-  }, [user, tab, authHeaders])
+  }, [authUser, tab, authFetch])
 
   // Fetch activity
   useEffect(() => {
-    if (!user || tab !== "activity") return
+    if (!authUser || tab !== "activity") return
     setActivityLoading(true)
-    fetch(`${API_URL}/api/contributions/me`, { headers: authHeaders() })
+    authFetch(`${API_URL}/api/contributions/me`)
       .then(r => r.ok ? r.json() : { contributions: [], points: {} })
       .then(data => {
         setContributions(data.contributions || [])
         setPoints(data.points || { total_points: 0, datasets_uploaded: 0, maps_created: 0, data_queries_served: 0, total_map_views: 0 })
       })
       .finally(() => setActivityLoading(false))
-  }, [user, tab, authHeaders])
+  }, [authUser, tab, authFetch])
 
   const handleLogout = () => {
-    localStorage.removeItem("spatix_email")
-    localStorage.removeItem("spatix_token")
-    localStorage.removeItem("spatix_session")
+    logout()
     router.push("/")
   }
 
   const handleDeleteMap = async (mapId: string) => {
     if (!confirm("Delete this map? This cannot be undone.")) return
-    const res = await fetch(`${API_URL}/api/map/${mapId}`, {
-      method: "DELETE",
-      headers: authHeaders(),
-    })
+    const res = await authFetch(`${API_URL}/api/map/${mapId}`, { method: "DELETE" })
     if (res.ok) setMaps(prev => prev.filter(m => m.id !== mapId))
   }
 
@@ -185,11 +192,11 @@ function DashboardContent() {
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-brand-600 rounded-full flex items-center justify-center text-white text-xl font-medium">
-              {user?.email[0].toUpperCase()}
+              {authUser?.email[0].toUpperCase()}
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
-              <p className="text-sm text-slate-500">{user?.email}</p>
+              <p className="text-sm text-slate-500">{authUser?.email}</p>
             </div>
           </div>
           <Link href="/maps" className="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium">
@@ -381,10 +388,10 @@ function DashboardContent() {
               <h2 className="text-lg font-semibold text-slate-900 mb-4">Profile</h2>
               <div className="flex items-center gap-4">
                 <div className="w-16 h-16 bg-brand-600 rounded-full flex items-center justify-center text-white text-2xl font-medium">
-                  {user?.email[0].toUpperCase()}
+                  {authUser?.email[0].toUpperCase()}
                 </div>
                 <div>
-                  <p className="font-medium text-slate-900">{user?.email}</p>
+                  <p className="font-medium text-slate-900">{authUser?.email}</p>
                   <p className="text-sm text-slate-500">Free plan</p>
                 </div>
               </div>
