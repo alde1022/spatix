@@ -68,13 +68,6 @@ export default function Navbar() {
                     onClick={() => setShowMenu(false)}
                     className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
-                    Dashboard
-                  </Link>
-                  <Link
-                    href="/dashboard?tab=maps"
-                    onClick={() => setShowMenu(false)}
-                    className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  >
                     My Maps
                   </Link>
                   <Link
