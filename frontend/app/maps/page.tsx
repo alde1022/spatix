@@ -6,6 +6,7 @@ import maplibregl from "maplibre-gl"
 import { useAuth } from "@/contexts/AuthContext"
 import { signInWithGoogle, signInWithGithub } from "@/lib/firebase"
 import "maplibre-gl/dist/maplibre-gl.css"
+import { handleMissingImages } from "@/lib/mapUtils"
 import { MapboxOverlay } from "@deck.gl/mapbox"
 import { ScatterplotLayer, ArcLayer, GeoJsonLayer } from "@deck.gl/layers"
 import { HexagonLayer, HeatmapLayer } from "@deck.gl/aggregation-layers"
@@ -587,6 +588,7 @@ export default function MapsPage() {
       antialias: true,
     })
 
+    handleMissingImages(m)
     m.addControl(new maplibregl.NavigationControl({ showCompass: true }), "bottom-right")
 
     m.on('mousemove', (e) => {

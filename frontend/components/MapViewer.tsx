@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
+import { handleMissingImages } from "@/lib/mapUtils"
 
 interface MapConfig {
   geojson: GeoJSON.FeatureCollection
@@ -81,6 +82,8 @@ export default function MapViewer({ config, title, isEmbed }: MapViewerProps) {
       zoom: 2,
       attributionControl: isEmbed ? false : { compact: true },
     })
+
+    handleMissingImages(map)
 
     if (!isEmbed) {
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")

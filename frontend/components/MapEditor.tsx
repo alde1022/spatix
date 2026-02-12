@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { handleMissingImages } from '@/lib/mapUtils';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
 import LayerPanel from './LayerPanel';
@@ -44,6 +45,7 @@ const MapEditor: React.FC = () => {
       attributionControl: false,
     });
 
+    handleMissingImages(m);
     m.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
     // Initialize MapboxDraw (works with MapLibre)
