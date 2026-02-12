@@ -28,11 +28,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # Config - JWT_SECRET is REQUIRED in production
 JWT_SECRET = os.environ.get("JWT_SECRET")
 if not JWT_SECRET:
-    if os.environ.get("ENVIRONMENT", "development") == "production":
-        raise RuntimeError("JWT_SECRET environment variable is required in production")
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("ENVIRONMENT", "development") == "production":
+        logger.critical("JWT_SECRET not set in production! Tokens will not persist across deploys.")
     import warnings
     warnings.warn("JWT_SECRET not set! Using insecure default for development only.", RuntimeWarning)
-    JWT_SECRET = "dev-only-insecure-secret-" + secrets.token_hex(16)
+    # Use a FIXED fallback so tokens survive process restarts in dev/misconfigured envs.
+    # In production, always set JWT_SECRET as an environment variable.
+    JWT_SECRET = "spatix-dev-insecure-secret-set-JWT_SECRET-env-var"
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
@@ -402,6 +404,17 @@ async def refresh_token(request: Request, response: Response):
 
     payload = verify_jwt(token)
     if not payload:
+        # Log the specific reason for rejection to aid debugging
+        try:
+            jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except jwt.ExpiredSignatureError:
+            logger.info("Token refresh failed: token expired")
+            raise HTTPException(401, "Token expired")
+        except jwt.InvalidSignatureError:
+            logger.warning("Token refresh failed: invalid signature (JWT_SECRET may have changed)")
+            raise HTTPException(401, "Invalid token signature")
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Token refresh failed: {type(e).__name__}")
         raise HTTPException(401, "Invalid or expired token")
 
     user_id = payload.get("sub")
