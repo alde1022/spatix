@@ -49,6 +49,18 @@ function isTokenExpired(token: string, bufferSeconds = 300): boolean {
   return Date.now() / 1000 > payload.exp - bufferSeconds
 }
 
+/** Wait for Firebase auth to report its initial state (resolves with the current user or null). */
+function waitForFirebaseUser(): Promise<import('firebase/auth').User | null> {
+  // If Firebase already has a user, return immediately
+  if (firebaseAuth.currentUser) return Promise.resolve(firebaseAuth.currentUser)
+  return new Promise((resolve) => {
+    const unsubscribe = firebaseAuth.onAuthStateChanged((user) => {
+      unsubscribe()
+      resolve(user)
+    })
+  })
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
@@ -56,15 +68,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /** Exchange a Firebase ID token for a fresh backend JWT. Concurrent calls share the same in-flight request. */
   const refreshBackendToken = useCallback(async (): Promise<AuthUser | null> => {
-    // If a refresh is already in progress, wait for it instead of returning null
+    // If a refresh is already in progress, wait for it instead of starting a new one
     if (refreshPromise.current) return refreshPromise.current
 
     const doRefresh = async (): Promise<AuthUser | null> => {
       try {
-        const fbUser = firebaseAuth.currentUser
+        // Strategy 1: Try backend /auth/refresh with the existing token (no Firebase needed)
+        const existingToken = localStorage.getItem('spatix_token')
+        if (existingToken) {
+          try {
+            const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${existingToken}` },
+            })
+            if (refreshRes.ok) {
+              const data = await refreshRes.json()
+              const email = data.user.email
+              const token = data.token
+              localStorage.setItem('spatix_email', email)
+              localStorage.setItem('spatix_token', token)
+              localStorage.setItem('spatix_session', token)
+              const authUser = { email, token }
+              setUser(authUser)
+              return authUser
+            }
+          } catch { /* backend refresh failed, try Firebase */ }
+        }
+
+        // Strategy 2: Wait for Firebase to initialize, then exchange Firebase token
+        const fbUser = await waitForFirebaseUser()
         if (!fbUser) return null
 
-        const firebaseToken = await fbUser.getIdToken()
+        const firebaseToken = await fbUser.getIdToken(true)
         const res = await fetch(`${API_URL}/auth/firebase/exchange`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
