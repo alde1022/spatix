@@ -96,33 +96,11 @@ function DashboardContent() {
    */
   const authFetchRef = useRef<(url: string, opts?: RequestInit) => Promise<Response>>(null!)
   authFetchRef.current = async (url: string, opts?: RequestInit) => {
-    // Pre-check: if token is expired client-side, refresh BEFORE making the request
-    let token = authUser?.token || null
-    if (token) {
-      try {
-        const parts = token.split('.')
-        if (parts.length === 3) {
-          const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
-          if (payload?.exp && Date.now() / 1000 > payload.exp - 60) {
-            // Token expires within 60 seconds or is already expired — refresh first
-            const refreshed = await refresh()
-            if (refreshed) {
-              token = refreshed.token
-            } else if (!logoutTriggered.current) {
-              logoutTriggered.current = true
-              logout()
-              router.push("/login?redirect=/dashboard")
-              return new Response(null, { status: 401 })
-            } else {
-              return new Response(null, { status: 401 })
-            }
-          }
-        }
-      } catch { /* proceed with existing token */ }
-    }
+    const token = authUser?.token || null
+    if (!token) return new Response(null, { status: 401 })
 
     const headers: Record<string, string> = { ...opts?.headers as Record<string, string> }
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    headers['Authorization'] = `Bearer ${token}`
     const res = await fetch(url, { ...opts, headers })
 
     if (res.status === 401) {

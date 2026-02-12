@@ -130,41 +130,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return refreshPromise.current
   }, [])
 
-  // On mount: validate stored token, refresh if expired
+  // On mount: always validate stored token against the backend before trusting it.
+  // Client-side JWT decoding cannot verify the signature, so tokens may look valid
+  // but be rejected by the backend (e.g. after JWT_SECRET rotation on redeploy).
   useEffect(() => {
-    const email = localStorage.getItem('spatix_email')
-    const token = localStorage.getItem('spatix_token')
+    let cancelled = false
 
-    if (email && token && !isTokenExpired(token)) {
-      setUser({ email, token })
-      setIsInitialized(true)
-      return
-    }
+    const init = async () => {
+      const email = localStorage.getItem('spatix_email')
+      const token = localStorage.getItem('spatix_token')
 
-    // Token missing or expired — wait briefly for Firebase to initialize,
-    // then try to refresh using the Firebase session.
-    const unsubscribe = firebaseAuth.onAuthStateChanged(async (fbUser) => {
-      if (fbUser) {
+      if (email && token) {
+        // We have stored credentials — validate them by refreshing via the backend.
+        // refreshBackendToken tries /auth/refresh first (fast, no Firebase needed),
+        // then falls back to Firebase token exchange.
         const refreshed = await refreshBackendToken()
-        if (!refreshed && email && token) {
-          // Firebase exchange failed but we still have some token — clear stale state
+        if (cancelled) return
+        if (!refreshed) {
+          // Both strategies failed — clear stale localStorage
           localStorage.removeItem('spatix_email')
           localStorage.removeItem('spatix_token')
           localStorage.removeItem('spatix_session')
           setUser(null)
         }
-      } else if (email || token) {
-        // No Firebase session — clear stale localStorage
-        localStorage.removeItem('spatix_email')
-        localStorage.removeItem('spatix_token')
-        localStorage.removeItem('spatix_session')
-        setUser(null)
+      } else {
+        // No stored credentials — check if Firebase has an active session
+        // (e.g. user just completed OAuth but page reloaded before token was stored)
+        const fbUser = await waitForFirebaseUser()
+        if (cancelled) return
+        if (fbUser) {
+          await refreshBackendToken()
+        }
       }
-      setIsInitialized(true)
-      unsubscribe()
-    })
 
-    return () => unsubscribe()
+      if (!cancelled) setIsInitialized(true)
+    }
+
+    init()
+    return () => { cancelled = true }
   }, [refreshBackendToken])
 
   // Periodically check token expiry and refresh proactively
