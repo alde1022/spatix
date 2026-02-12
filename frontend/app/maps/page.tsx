@@ -127,7 +127,7 @@ interface SavedMap {
 }
 
 export default function MapsPage() {
-  const { user: authUser, isLoggedIn, login: authLogin, logout: authLogout } = useAuth()
+  const { user: authUser, isLoggedIn, login: authLogin, logout: authLogout, refresh } = useAuth()
   const mapContainer = useRef<HTMLDivElement>(null)
   const [demoLoaded, setDemoLoaded] = useState(false)
   const map = useRef<maplibregl.Map | null>(null)
@@ -212,7 +212,14 @@ export default function MapsPage() {
       let res = token
         ? await fetch(`${API_URL}/api/maps/me`, { headers: { Authorization: `Bearer ${token}` } })
         : null
-      // If authenticated request failed (expired token etc.), fall back to email lookup
+      // If 401, try refreshing the backend token via Firebase and retry
+      if (res && res.status === 401) {
+        const refreshed = await refresh()
+        if (refreshed) {
+          res = await fetch(`${API_URL}/api/maps/me`, { headers: { Authorization: `Bearer ${refreshed.token}` } })
+        }
+      }
+      // If authenticated request still failed, fall back to email lookup
       if (res && !res.ok && storedEmail) {
         res = await fetch(`${API_URL}/api/maps/by-email?email=${encodeURIComponent(storedEmail)}`)
       } else if (!res && storedEmail) {
@@ -236,7 +243,7 @@ export default function MapsPage() {
     } finally {
       setLoadingMyMaps(false)
     }
-  }, [])
+  }, [refresh])
 
   useEffect(() => {
     if (activePanel === "history") fetchMyMaps()

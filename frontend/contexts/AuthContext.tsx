@@ -15,6 +15,8 @@ interface AuthContextType {
   isLoggedIn: boolean
   login: (email: string, token: string) => void
   logout: () => void
+  /** Attempt to refresh the backend JWT using the current Firebase session. Returns the new AuthUser or null. */
+  refresh: () => Promise<AuthUser | null>
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -22,6 +24,7 @@ const AuthContext = createContext<AuthContextType>({
   isLoggedIn: false,
   login: () => {},
   logout: () => {},
+  refresh: async () => null,
 })
 
 /** Decode JWT payload without verifying signature. */
@@ -45,41 +48,47 @@ function isTokenExpired(token: string, bufferSeconds = 300): boolean {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
-  const refreshing = useRef(false)
+  const refreshPromise = useRef<Promise<AuthUser | null> | null>(null)
 
-  /** Exchange a Firebase ID token for a fresh backend JWT. */
+  /** Exchange a Firebase ID token for a fresh backend JWT. Concurrent calls share the same in-flight request. */
   const refreshBackendToken = useCallback(async (): Promise<AuthUser | null> => {
-    if (refreshing.current) return null
-    refreshing.current = true
-    try {
-      const fbUser = firebaseAuth.currentUser
-      if (!fbUser) return null
+    // If a refresh is already in progress, wait for it instead of returning null
+    if (refreshPromise.current) return refreshPromise.current
 
-      const firebaseToken = await fbUser.getIdToken()
-      const res = await fetch(`${API_URL}/auth/firebase/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: firebaseToken }),
-      })
+    const doRefresh = async (): Promise<AuthUser | null> => {
+      try {
+        const fbUser = firebaseAuth.currentUser
+        if (!fbUser) return null
 
-      if (!res.ok) return null
+        const firebaseToken = await fbUser.getIdToken()
+        const res = await fetch(`${API_URL}/auth/firebase/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: firebaseToken }),
+        })
 
-      const data = await res.json()
-      const email = data.user.email
-      const token = data.token
+        if (!res.ok) return null
 
-      localStorage.setItem('spatix_email', email)
-      localStorage.setItem('spatix_token', token)
-      localStorage.setItem('spatix_session', token)
+        const data = await res.json()
+        const email = data.user.email
+        const token = data.token
 
-      const authUser = { email, token }
-      setUser(authUser)
-      return authUser
-    } catch {
-      return null
-    } finally {
-      refreshing.current = false
+        localStorage.setItem('spatix_email', email)
+        localStorage.setItem('spatix_token', token)
+        localStorage.setItem('spatix_session', token)
+
+        const authUser = { email, token }
+        setUser(authUser)
+        return authUser
+      } catch {
+        return null
+      } finally {
+        refreshPromise.current = null
+      }
     }
+
+    refreshPromise.current = doRefresh()
+    return refreshPromise.current
   }, [])
 
   // On mount: validate stored token, refresh if expired
@@ -144,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isLoggedIn: !!user, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoggedIn: !!user, login, logout, refresh: refreshBackendToken }}>
       {children}
     </AuthContext.Provider>
   )
