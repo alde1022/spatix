@@ -199,7 +199,7 @@ export default function MapsPage() {
 
   // Fetch my maps when history tab is opened
   const fetchMyMaps = useCallback(async () => {
-    const token = localStorage.getItem("spatix_token")
+    let token = localStorage.getItem("spatix_token")
     const storedEmail = localStorage.getItem("spatix_save_email")
     if (!token && !storedEmail) {
       setMyMaps([])
@@ -208,6 +208,19 @@ export default function MapsPage() {
     setLoadingMyMaps(true)
     setMyMapsError(null)
     try {
+      // If token looks expired on the client side, try refreshing before making the request
+      if (token) {
+        try {
+          const parts = token.split('.')
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+            if (payload?.exp && Date.now() / 1000 > payload.exp - 60) {
+              const refreshed = await refresh()
+              token = refreshed?.token || null
+            }
+          }
+        } catch { /* proceed with existing token */ }
+      }
       // Prefer authenticated endpoint if token is available
       let res = token
         ? await fetch(`${API_URL}/api/maps/me`, { headers: { Authorization: `Bearer ${token}` } })

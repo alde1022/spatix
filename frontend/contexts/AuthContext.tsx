@@ -13,6 +13,8 @@ interface AuthUser {
 interface AuthContextType {
   user: AuthUser | null
   isLoggedIn: boolean
+  /** Whether the initial auth check (localStorage + Firebase) has completed. */
+  isInitialized: boolean
   login: (email: string, token: string) => void
   logout: () => void
   /** Attempt to refresh the backend JWT using the current Firebase session. Returns the new AuthUser or null. */
@@ -22,6 +24,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoggedIn: false,
+  isInitialized: false,
   login: () => {},
   logout: () => {},
   refresh: async () => null,
@@ -48,6 +51,7 @@ function isTokenExpired(token: string, bufferSeconds = 300): boolean {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
+  const [isInitialized, setIsInitialized] = useState(false)
   const refreshPromise = useRef<Promise<AuthUser | null> | null>(null)
 
   /** Exchange a Firebase ID token for a fresh backend JWT. Concurrent calls share the same in-flight request. */
@@ -98,6 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (email && token && !isTokenExpired(token)) {
       setUser({ email, token })
+      setIsInitialized(true)
       return
     }
 
@@ -120,6 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem('spatix_session')
         setUser(null)
       }
+      setIsInitialized(true)
       unsubscribe()
     })
 
@@ -153,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isLoggedIn: !!user, login, logout, refresh: refreshBackendToken }}>
+    <AuthContext.Provider value={{ user, isLoggedIn: !!user, isInitialized, login, logout, refresh: refreshBackendToken }}>
       {children}
     </AuthContext.Provider>
   )

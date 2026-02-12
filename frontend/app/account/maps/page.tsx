@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Navbar from '@/components/Navbar'
+import { useAuth } from '@/contexts/AuthContext'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.spatix.io'
 
@@ -27,6 +28,7 @@ interface MapsResponse {
 
 export default function MyMapsPage() {
   const router = useRouter()
+  const { isInitialized, refresh, logout } = useAuth()
   const [maps, setMaps] = useState<MapItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -35,29 +37,43 @@ export default function MyMapsPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
 
   useEffect(() => {
+    if (!isInitialized) return
     const token = localStorage.getItem('spatix_token')
     if (!token) {
       router.push('/login?redirect=/account/maps')
       return
     }
     fetchMaps(token)
-  }, [router])
+  }, [isInitialized, router])
 
   const fetchMaps = async (token: string) => {
     try {
       const res = await fetch(`${API_URL}/api/maps/me?limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      
+
       if (res.status === 401) {
-        localStorage.removeItem('spatix_token')
-        localStorage.removeItem('spatix_email')
+        // Try refreshing the token before giving up
+        const refreshed = await refresh()
+        if (refreshed) {
+          const retryRes = await fetch(`${API_URL}/api/maps/me?limit=100`, {
+            headers: { Authorization: `Bearer ${refreshed.token}` }
+          })
+          if (retryRes.ok) {
+            const data: MapsResponse = await retryRes.json()
+            setMaps(data.maps || [])
+            setTotal(data.total || 0)
+            setLoading(false)
+            return
+          }
+        }
+        logout()
         router.push('/login?redirect=/account/maps')
         return
       }
-      
+
       if (!res.ok) throw new Error('Failed to load maps')
-      
+
       const data: MapsResponse = await res.json()
       setMaps(data.maps || [])
       setTotal(data.total || 0)
