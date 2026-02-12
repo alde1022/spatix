@@ -131,7 +131,7 @@ function DashboardContent() {
 
   // Once user is confirmed, eagerly load points summary for the stats row
   useEffect(() => {
-    if (!authUser) return
+    if (!isInitialized || !authUser) return
     authFetch(`${API_URL}/api/contributions/me`)
       .then(r => r.ok ? r.json() : { points: null })
       .then(data => {
@@ -139,11 +139,11 @@ function DashboardContent() {
       })
       .catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser?.email])
+  }, [isInitialized, authUser?.email])
 
   // Fetch maps
   useEffect(() => {
-    if (!authUser || tab !== "maps") return
+    if (!isInitialized || !authUser || tab !== "maps") return
     setMapsLoading(true)
     Promise.all([
       authFetch(`${API_URL}/api/maps/me`).then(r => r.ok ? r.json() : { maps: [] }),
@@ -153,22 +153,22 @@ function DashboardContent() {
       setMapStats(stats)
     }).finally(() => setMapsLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser?.email, tab])
+  }, [isInitialized, authUser?.email, tab])
 
   // Fetch datasets
   useEffect(() => {
-    if (!authUser || tab !== "datasets") return
+    if (!isInitialized || !authUser || tab !== "datasets") return
     setDatasetsLoading(true)
     authFetch(`${API_URL}/api/datasets/me`)
       .then(r => r.ok ? r.json() : { datasets: [] })
       .then(data => setDatasets(data.datasets || []))
       .finally(() => setDatasetsLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser?.email, tab])
+  }, [isInitialized, authUser?.email, tab])
 
   // Fetch activity
   useEffect(() => {
-    if (!authUser || tab !== "activity") return
+    if (!isInitialized || !authUser || tab !== "activity") return
     setActivityLoading(true)
     authFetch(`${API_URL}/api/contributions/me`)
       .then(r => r.ok ? r.json() : { contributions: [], points: {} })
@@ -178,7 +178,7 @@ function DashboardContent() {
       })
       .finally(() => setActivityLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser?.email, tab])
+  }, [isInitialized, authUser?.email, tab])
 
   const handleLogout = () => {
     logout()
