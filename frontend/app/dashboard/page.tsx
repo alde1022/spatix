@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, Suspense } from "react"
+import { useState, useEffect, useCallback, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Navbar from "@/components/Navbar"
@@ -58,7 +58,7 @@ const ACTION_LABELS: Record<string, string> = {
 function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user: authUser, isLoggedIn, logout, refresh } = useAuth()
+  const { user: authUser, isLoggedIn, isInitialized, logout, refresh } = useAuth()
   const initialTab = (searchParams.get("tab") as Tab) || "maps"
   const [tab, setTab] = useState<Tab>(initialTab)
   const [loading, setLoading] = useState(true)
@@ -77,19 +77,18 @@ function DashboardContent() {
   const [points, setPoints] = useState<PointsSummary>({ total_points: 0, datasets_uploaded: 0, maps_created: 0, data_queries_served: 0, total_map_views: 0 })
   const [activityLoading, setActivityLoading] = useState(false)
 
-  // Redirect to login if not authenticated (after AuthContext has initialized)
+  // Track whether we've already triggered a logout redirect to prevent cascading 401 handlers
+  const logoutTriggered = useRef(false)
+
+  // Redirect to login if not authenticated (only after AuthContext has finished initializing)
   useEffect(() => {
-    // AuthContext starts with user=null and sets it async,
-    // so wait a tick before deciding the user isn't logged in.
-    const timeout = setTimeout(() => {
-      if (!authUser) {
-        router.push("/login?redirect=/dashboard")
-      } else {
-        setLoading(false)
-      }
-    }, 100)
-    return () => clearTimeout(timeout)
-  }, [authUser, router])
+    if (!isInitialized) return // still loading — don't redirect yet
+    if (authUser) {
+      setLoading(false)
+    } else {
+      router.push("/login?redirect=/dashboard")
+    }
+  }, [isInitialized, authUser, router])
 
   const authHeaders = useCallback((): Record<string, string> => {
     return authUser?.token ? { Authorization: `Bearer ${authUser.token}` } : {}
@@ -99,14 +98,22 @@ function DashboardContent() {
   const authFetch = useCallback(async (url: string, opts?: RequestInit) => {
     const res = await fetch(url, { ...opts, headers: { ...opts?.headers, ...authHeaders() } })
     if (res.status === 401) {
+      // Prevent cascading logout from multiple concurrent 401 responses
+      if (logoutTriggered.current) return res
+
       // Token rejected — try refreshing via Firebase before giving up
       const refreshed = await refresh()
       if (refreshed) {
         const retryRes = await fetch(url, { ...opts, headers: { ...opts?.headers, Authorization: `Bearer ${refreshed.token}` } })
         if (retryRes.status !== 401) return retryRes
       }
-      logout()
-      router.push("/login?redirect=/dashboard")
+
+      // Only logout/redirect once even if multiple requests fail
+      if (!logoutTriggered.current) {
+        logoutTriggered.current = true
+        logout()
+        router.push("/login?redirect=/dashboard")
+      }
     }
     return res
   }, [authHeaders, logout, router, refresh])
