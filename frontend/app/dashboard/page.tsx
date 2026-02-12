@@ -390,8 +390,13 @@ function DashboardContent() {
                   <div key={i} className={`flex items-center justify-between px-4 py-3 ${i > 0 ? "border-t border-slate-50" : ""}`}>
                     <div>
                       <p className="text-sm text-slate-900">{ACTION_LABELS[c.action] || c.action}</p>
-                      {c.resource_id && (
-                        <p className="text-xs text-slate-400 mt-0.5">{c.resource_type}: {c.resource_id}</p>
+                      {c.resource_id && c.resource_type === "map" && (
+                        <Link href={`/m/${c.resource_id}`} className="text-xs text-brand-600 hover:text-brand-700 mt-0.5 inline-block">
+                          View map →
+                        </Link>
+                      )}
+                      {c.resource_id && c.resource_type === "dataset" && (
+                        <p className="text-xs text-slate-400 mt-0.5">Dataset: {c.resource_id}</p>
                       )}
                     </div>
                     <div className="text-right">
