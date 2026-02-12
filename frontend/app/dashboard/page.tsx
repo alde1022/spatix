@@ -90,13 +90,41 @@ function DashboardContent() {
     }
   }, [isInitialized, authUser, router])
 
-  const authHeaders = useCallback((): Record<string, string> => {
-    return authUser?.token ? { Authorization: `Bearer ${authUser.token}` } : {}
-  }, [authUser])
+  /**
+   * Fetch wrapper that ensures a valid token before requests, retries with refresh on 401.
+   * Uses a ref so effects don't re-fire when the auth user/token changes.
+   */
+  const authFetchRef = useRef<(url: string, opts?: RequestInit) => Promise<Response>>(null!)
+  authFetchRef.current = async (url: string, opts?: RequestInit) => {
+    // Pre-check: if token is expired client-side, refresh BEFORE making the request
+    let token = authUser?.token || null
+    if (token) {
+      try {
+        const parts = token.split('.')
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+          if (payload?.exp && Date.now() / 1000 > payload.exp - 60) {
+            // Token expires within 60 seconds or is already expired — refresh first
+            const refreshed = await refresh()
+            if (refreshed) {
+              token = refreshed.token
+            } else if (!logoutTriggered.current) {
+              logoutTriggered.current = true
+              logout()
+              router.push("/login?redirect=/dashboard")
+              return new Response(null, { status: 401 })
+            } else {
+              return new Response(null, { status: 401 })
+            }
+          }
+        }
+      } catch { /* proceed with existing token */ }
+    }
 
-  /** Fetch wrapper that retries with a refreshed token on 401, then logs out if still unauthorized. */
-  const authFetch = useCallback(async (url: string, opts?: RequestInit) => {
-    const res = await fetch(url, { ...opts, headers: { ...opts?.headers, ...authHeaders() } })
+    const headers: Record<string, string> = { ...opts?.headers as Record<string, string> }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(url, { ...opts, headers })
+
     if (res.status === 401) {
       // Prevent cascading logout from multiple concurrent 401 responses
       if (logoutTriggered.current) return res
@@ -104,7 +132,7 @@ function DashboardContent() {
       // Token rejected — try refreshing via Firebase before giving up
       const refreshed = await refresh()
       if (refreshed) {
-        const retryRes = await fetch(url, { ...opts, headers: { ...opts?.headers, Authorization: `Bearer ${refreshed.token}` } })
+        const retryRes = await fetch(url, { ...opts, headers: { ...opts?.headers as Record<string, string>, Authorization: `Bearer ${refreshed.token}` } })
         if (retryRes.status !== 401) return retryRes
       }
 
@@ -116,7 +144,12 @@ function DashboardContent() {
       }
     }
     return res
-  }, [authHeaders, logout, router, refresh])
+  }
+
+  // Stable wrapper that delegates to the ref — safe to use in effect deps
+  const authFetch = useCallback((url: string, opts?: RequestInit) => {
+    return authFetchRef.current(url, opts)
+  }, [])
 
   // Once user is confirmed, eagerly load points summary for the stats row
   useEffect(() => {
@@ -127,7 +160,8 @@ function DashboardContent() {
         if (data?.points) setPoints(data.points)
       })
       .catch(() => {})
-  }, [authUser, authFetch])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.email])
 
   // Fetch maps
   useEffect(() => {
@@ -140,7 +174,8 @@ function DashboardContent() {
       setMaps(mapsData.maps || [])
       setMapStats(stats)
     }).finally(() => setMapsLoading(false))
-  }, [authUser, tab, authFetch])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.email, tab])
 
   // Fetch datasets
   useEffect(() => {
@@ -150,7 +185,8 @@ function DashboardContent() {
       .then(r => r.ok ? r.json() : { datasets: [] })
       .then(data => setDatasets(data.datasets || []))
       .finally(() => setDatasetsLoading(false))
-  }, [authUser, tab, authFetch])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.email, tab])
 
   // Fetch activity
   useEffect(() => {
@@ -163,7 +199,8 @@ function DashboardContent() {
         setPoints(data.points || { total_points: 0, datasets_uploaded: 0, maps_created: 0, data_queries_served: 0, total_map_views: 0 })
       })
       .finally(() => setActivityLoading(false))
-  }, [authUser, tab, authFetch])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.email, tab])
 
   const handleLogout = () => {
     logout()

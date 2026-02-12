@@ -382,6 +382,55 @@ async def login(req: LoginRequest, request: Request, response: Response):
     }
 
 
+@router.post("/refresh")
+async def refresh_token(request: Request, response: Response):
+    """Refresh an existing backend JWT. Accepts a valid (non-expired) token
+    and returns a fresh one. This provides a non-Firebase refresh path."""
+    token = None
+
+    # Try Authorization header first
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+
+    # Fall back to cookie
+    if not token:
+        token = request.cookies.get(COOKIE_NAME)
+
+    if not token:
+        raise HTTPException(401, "No token provided")
+
+    payload = verify_jwt(token)
+    if not payload:
+        raise HTTPException(401, "Invalid or expired token")
+
+    user_id = payload.get("sub")
+    email = payload.get("email")
+    if not user_id or not email:
+        raise HTTPException(401, "Invalid token payload")
+
+    # Verify user still exists
+    user = db_execute(
+        "SELECT id, email, plan FROM users WHERE id = %s",
+        (user_id,),
+        fetch_one=True
+    )
+    if not user:
+        raise HTTPException(401, "User not found")
+
+    # Issue a fresh token
+    new_token = create_jwt(user["id"], user["email"], user.get("plan", "free"))
+    set_auth_cookie(response, new_token)
+
+    return {
+        "token": new_token,
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+        }
+    }
+
+
 @router.post("/logout")
 async def logout(response: Response):
     """Log out and clear auth cookie"""
