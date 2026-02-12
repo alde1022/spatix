@@ -135,6 +135,9 @@ def init_db():
 
                     -- Link maps to emails for anonymous users
                     ALTER TABLE maps ADD COLUMN IF NOT EXISTS creator_email TEXT;
+                    
+                    -- Add display_name to users
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
                     CREATE INDEX IF NOT EXISTS idx_maps_creator_email ON maps(creator_email);
 
                     -- Agent attribution on maps
