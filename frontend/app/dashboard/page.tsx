@@ -59,7 +59,7 @@ function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user: authUser, isLoggedIn, isInitialized, logout, refresh } = useAuth()
-  const initialTab = (searchParams.get("tab") as Tab) || "maps"
+  const initialTab = (searchParams.get("tab") as Tab) || "settings"
   const [tab, setTab] = useState<Tab>(initialTab)
   const [loading, setLoading] = useState(true)
 
