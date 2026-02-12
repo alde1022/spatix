@@ -58,7 +58,7 @@ const ACTION_LABELS: Record<string, string> = {
 function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user: authUser, isLoggedIn, logout } = useAuth()
+  const { user: authUser, isLoggedIn, logout, refresh } = useAuth()
   const initialTab = (searchParams.get("tab") as Tab) || "maps"
   const [tab, setTab] = useState<Tab>(initialTab)
   const [loading, setLoading] = useState(true)
@@ -91,35 +91,36 @@ function DashboardContent() {
     return () => clearTimeout(timeout)
   }, [authUser, router])
 
-  // Once user is confirmed, eagerly load points summary for the stats row
-  useEffect(() => {
-    if (!authUser) return
-    fetch(`${API_URL}/api/contributions/me`, {
-      headers: { Authorization: `Bearer ${authUser.token}` },
-    })
-      .then(r => {
-        if (r.status === 401) { logout(); router.push("/login?redirect=/dashboard"); return { points: null } }
-        return r.ok ? r.json() : { points: null }
-      })
-      .then(data => {
-        if (data?.points) setPoints(data.points)
-      })
-      .catch(() => {})
-  }, [authUser, logout, router])
-
   const authHeaders = useCallback((): Record<string, string> => {
     return authUser?.token ? { Authorization: `Bearer ${authUser.token}` } : {}
   }, [authUser])
 
-  /** Fetch wrapper that handles 401 by logging out and redirecting. */
+  /** Fetch wrapper that retries with a refreshed token on 401, then logs out if still unauthorized. */
   const authFetch = useCallback(async (url: string, opts?: RequestInit) => {
     const res = await fetch(url, { ...opts, headers: { ...opts?.headers, ...authHeaders() } })
     if (res.status === 401) {
+      // Token rejected — try refreshing via Firebase before giving up
+      const refreshed = await refresh()
+      if (refreshed) {
+        const retryRes = await fetch(url, { ...opts, headers: { ...opts?.headers, Authorization: `Bearer ${refreshed.token}` } })
+        if (retryRes.status !== 401) return retryRes
+      }
       logout()
       router.push("/login?redirect=/dashboard")
     }
     return res
-  }, [authHeaders, logout, router])
+  }, [authHeaders, logout, router, refresh])
+
+  // Once user is confirmed, eagerly load points summary for the stats row
+  useEffect(() => {
+    if (!authUser) return
+    authFetch(`${API_URL}/api/contributions/me`)
+      .then(r => r.ok ? r.json() : { points: null })
+      .then(data => {
+        if (data?.points) setPoints(data.points)
+      })
+      .catch(() => {})
+  }, [authUser, authFetch])
 
   // Fetch maps
   useEffect(() => {
