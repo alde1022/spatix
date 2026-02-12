@@ -11,6 +11,16 @@ from typing import Optional
 import logging
 
 from fastapi import Header
+import hashlib
+
+def generate_display_name(entity_type: str, entity_id: str) -> str:
+    """Generate anonymous display name for users."""
+    if entity_type == "agent":
+        return entity_id  # Agents keep their names
+    # For users, generate "Mapper_XXXX"
+    hash_suffix = hashlib.md5(entity_id.encode()).hexdigest()[:4].upper()
+    return f"Mapper_{hash_suffix}"
+
 from database import (
     get_leaderboard as db_get_leaderboard,
     get_points as db_get_points,
@@ -83,8 +93,7 @@ async def get_leaderboard(
             {
                 "rank": i + 1,
                 "entity_type": e.get("entity_type"),
-                "entity_id": e.get("entity_id"),
-                "display_name": e.get("entity_email") or e.get("entity_id", "anonymous"),
+                "display_name": generate_display_name(e.get("entity_type", "user"), e.get("entity_id", "")),
                 "total_points": e.get("total_points", 0),
                 "datasets_uploaded": e.get("datasets_uploaded", 0),
                 "maps_created": e.get("maps_created", 0),
@@ -124,7 +133,7 @@ async def get_points(entity_type: str, entity_id: str):
     return {
         "entity_type": points.get("entity_type"),
         "entity_id": points.get("entity_id"),
-        "display_name": points.get("entity_email") or entity_id,
+        "display_name": generate_display_name(entity_type, entity_id),
         "total_points": points.get("total_points", 0),
         "datasets_uploaded": points.get("datasets_uploaded", 0),
         "maps_created": points.get("maps_created", 0),
