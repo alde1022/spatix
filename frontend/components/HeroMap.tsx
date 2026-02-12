@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from "react"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
+import { handleMissingImages } from "@/lib/mapUtils"
 
 type VizType = "points" | "bubbles" | "heatmap"
 
@@ -91,6 +92,7 @@ export default function HeroMap() {
         pitch: 0,
       })
 
+      handleMissingImages(m)
       m.scrollZoom.disable()
       m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
 

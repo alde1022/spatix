@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from "react"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
+import { handleMissingImages } from "@/lib/mapUtils"
 
 interface MapPreviewProps {
   geojson?: any
@@ -88,6 +89,8 @@ export default function MapPreview({
       interactive,
       attributionControl: false,
     })
+
+    handleMissingImages(m)
 
     if (interactive) {
       m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")

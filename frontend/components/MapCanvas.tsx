@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from "react"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
+import { handleMissingImages } from "@/lib/mapUtils"
 
 interface MapCanvasProps {
   geojson: any
@@ -227,6 +228,7 @@ export default function MapCanvas({ geojson, onSave, onClose, saving }: MapCanva
       attributionControl: false,
     })
 
+    handleMissingImages(m)
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
     m.addControl(new maplibregl.ScaleControl({ maxWidth: 100 }), "bottom-left")
 
