@@ -20,21 +20,21 @@ export interface MapConfig {
   geojson: any
 }
 
-// Free basemaps
+// OpenFreeMap basemaps (OSM data, MIT license, CORS-enabled)
 const BASEMAPS: Record<string, { name: string; style: any; preview: string }> = {
   light: {
     name: "Light",
-    style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+    style: "https://tiles.openfreemap.org/styles/positron",
     preview: "bg-slate-100"
   },
   dark: {
     name: "Dark", 
-    style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+    style: "https://tiles.openfreemap.org/styles/dark",
     preview: "bg-slate-800"
   },
   streets: {
     name: "Streets",
-    style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json", 
+    style: "https://tiles.openfreemap.org/styles/bright",
     preview: "bg-amber-100"
   },
   satellite: {

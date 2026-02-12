@@ -17,9 +17,9 @@ const defaultStyle: LayerStyle = {
 };
 
 const BASEMAPS = {
-  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-  light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-  streets: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+  light: 'https://tiles.openfreemap.org/styles/positron',
+  streets: 'https://tiles.openfreemap.org/styles/bright',
 };
 
 const MapEditor: React.FC = () => {

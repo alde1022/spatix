@@ -33,9 +33,9 @@ interface MapViewerProps {
 }
 
 const BASEMAPS = {
-  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-  streets: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+  light: "https://tiles.openfreemap.org/styles/positron",
+  dark: "https://tiles.openfreemap.org/styles/dark",
+  streets: "https://tiles.openfreemap.org/styles/bright",
   satellite: {
     version: 8,
     sources: {
