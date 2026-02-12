@@ -414,3 +414,22 @@ except Exception as e:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+@app.get("/debug/db-state")
+async def debug_db_state():
+    """Temporary debug endpoint - REMOVE AFTER DEBUGGING"""
+    from database import get_db, USE_POSTGRES
+    
+    result = {"users": [], "maps": []}
+    
+    with get_db() as conn:
+        if USE_POSTGRES:
+            from psycopg2.extras import RealDictCursor
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id, email, created_at::text FROM users ORDER BY id DESC LIMIT 10")
+                result["users"] = [dict(r) for r in cur.fetchall()]
+                
+                cur.execute("SELECT id, user_id, title, created_at::text FROM maps ORDER BY id DESC LIMIT 15")
+                result["maps"] = [dict(r) for r in cur.fetchall()]
+    
+    return result
