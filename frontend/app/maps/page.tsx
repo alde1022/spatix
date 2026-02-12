@@ -60,9 +60,9 @@ const SAMPLE_DATASETS = [
 ]
 
 const BASEMAPS = {
-  dark: { name: "Dark", style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json" },
-  light: { name: "Light", style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" },
-  streets: { name: "Streets", style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json" },
+  dark: { name: "Dark", style: "https://tiles.openfreemap.org/styles/dark" },
+  light: { name: "Light", style: "https://tiles.openfreemap.org/styles/positron" },
+  streets: { name: "Streets", style: "https://tiles.openfreemap.org/styles/bright" },
   satellite: { 
     name: "Satellite", 
     style: {

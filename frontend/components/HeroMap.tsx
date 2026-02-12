@@ -84,7 +84,7 @@ export default function HeroMap() {
     try {
       const m = new maplibregl.Map({
         container: mapContainer.current,
-        style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        style: "https://tiles.openfreemap.org/styles/dark",
         center: [-122.42, 37.775],
         zoom: 12.5,
         attributionControl: false,
