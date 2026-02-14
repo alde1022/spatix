@@ -37,11 +37,13 @@ router = APIRouter(prefix="/api", tags=["contributions"])
 # Centralized points schedule — importable by other modules
 
 POINTS_SCHEDULE = {
-    "dataset_upload": 50,       # Upload a public dataset
+    "dataset_upload": 10,       # Upload a public dataset
     "map_create": 5,            # Create a map (any method)
     "map_create_with_layers": 10,  # Create a map that uses public datasets
     "dataset_query": 1,         # Someone queries your dataset
-    "dataset_used_in_map": 5,   # Your dataset is used in a map
+    "dataset_used_in_map_first": 50,  # First time your dataset is used in a map
+    "dataset_used_in_map": 1,   # Subsequent uses in maps
+    "dataset_download": 10,     # Someone downloads your dataset
     "map_views_milestone_100": 10,   # Map hits 100 views
     "map_views_milestone_1000": 50,  # Map hits 1000 views
 }

@@ -34,6 +34,8 @@ from database import (
     award_points,
     get_dataset_uploader_info,
     get_user_plan,
+    record_dataset_usage,
+    check_dataset_first_map_usage,
 )
 from api.contributions import get_points_multiplier
 
@@ -498,10 +500,27 @@ async def create_map(
                     source_dataset_ids.append(layer_id)
                     increment_dataset_used_in_maps(layer_id)
 
-                    # Reward dataset uploader when their data is used
+                    # Record usage in dataset_usage table
+                    try:
+                        record_dataset_usage(
+                            dataset_id=layer_id,
+                            usage_type="map_layer",
+                            used_in_map_id=None,  # map_id not yet generated
+                            user_id=user_id,
+                            agent_id=body.agent_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record dataset usage for {layer_id}: {e}")
+
+                    # Reward dataset uploader: 50 pts first use, 1 pt subsequent
                     uploader = get_dataset_uploader_info(layer_id)
                     if uploader:
-                        uploader_pts = POINTS_DATASET_USED_IN_MAP * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
+                        try:
+                            is_first = check_dataset_first_map_usage(layer_id)
+                        except Exception:
+                            is_first = False
+                        base_pts = 50 if is_first else 1
+                        uploader_pts = base_pts * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
                         record_contribution(
                             action="dataset_used_in_map",
                             resource_type="dataset",

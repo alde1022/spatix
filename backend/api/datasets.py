@@ -1,21 +1,27 @@
 """
-Spatix Dataset Registry API
-Public, queryable, composable geospatial datasets.
+Spatix Dataset Catalog API
+Rich metadata, discovery, and usage tracking for geospatial datasets.
 
-Agents and users upload datasets. Other agents compose maps from them.
-Every query and usage is tracked for the contribution/points system.
+POST   /api/datasets                    Upload new dataset
+GET    /api/datasets                    List/filter datasets
+GET    /api/datasets/{id}               Get dataset metadata
+GET    /api/datasets/{id}/data          Get full GeoJSON data
+GET    /api/datasets/{id}/preview       Preview first N features
+POST   /api/datasets/search             Keyword search
+DELETE /api/datasets/{id}               Delete dataset (creator only)
 
-POST /api/dataset - Upload a public dataset
-GET /api/dataset/{id} - Get dataset metadata
-GET /api/dataset/{id}/geojson - Get raw GeoJSON data
-GET /api/datasets - Search/list public datasets
-GET /api/datasets/categories - List available categories
+Backward-compatible aliases:
+POST   /api/dataset                     -> POST /api/datasets
+GET    /api/dataset/{id}                -> GET /api/datasets/{id}
+GET    /api/dataset/{id}/geojson        -> GET /api/datasets/{id}/data
+DELETE /api/dataset/{id}                -> DELETE /api/datasets/{id}
 """
-from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi import APIRouter, HTTPException, Header, Request, Query
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any
 import secrets
 import json
+import math
 import logging
 
 from database import (
@@ -31,6 +37,9 @@ from database import (
     award_points,
     get_dataset_uploader_info,
     get_user_datasets as db_get_user_datasets,
+    record_dataset_usage,
+    check_dataset_first_map_usage,
+    increment_download_count,
 )
 from api.contributions import get_points_multiplier
 
@@ -44,6 +53,7 @@ router = APIRouter(prefix="/api", tags=["datasets"])
 _dataset_ip_requests: dict = {}
 DATASET_RATE_LIMIT_WINDOW = 3600  # 1 hour
 DATASET_RATE_LIMIT_MAX = 20  # 20 datasets per hour per IP
+
 
 def check_dataset_rate_limit(ip: str) -> bool:
     now = datetime.now(timezone.utc)
@@ -59,6 +69,7 @@ def check_dataset_rate_limit(ip: str) -> bool:
     _dataset_ip_requests[ip].append(now)
     return True
 
+
 DATASET_CATEGORIES = [
     "boundaries",       # Countries, states, counties, zip codes, districts
     "infrastructure",   # Roads, buildings, utilities, transit
@@ -69,57 +80,74 @@ DATASET_CATEGORIES = [
     "health",           # Hospitals, clinics, health metrics
     "education",        # Schools, universities, districts
     "culture",          # Museums, landmarks, historic sites
+    "public-safety",    # Crime, police, fire, emergency
+    "custom",
     "other",
 ]
 
-# Points awarded for dataset actions
-POINTS_DATASET_UPLOAD = 50
-POINTS_DATASET_QUERY = 1
-POINTS_DATASET_USED_IN_MAP = 5
+# Points awarded for dataset actions (v2)
+POINTS_DATASET_UPLOAD = 10
+POINTS_DATASET_FIRST_USE = 50
+POINTS_DATASET_SUBSEQUENT_USE = 1
+POINTS_DATASET_DOWNLOAD = 10
+
+MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
 
 
 # ==================== MODELS ====================
 
+class SourceInfo(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+
+class LicenseInfo(BaseModel):
+    type: str = "public-domain"
+    attribution_required: bool = False
+    commercial_use: bool = True
+
+class SchemaField(BaseModel):
+    name: str
+    type: str = "string"
+    description: Optional[str] = None
+
 class DatasetCreateRequest(BaseModel):
     """Request to create/upload a dataset."""
-    title: str = Field(..., min_length=1, max_length=255)
-    description: str = Field(default="", max_length=2000)
-    license: str = Field(default="public-domain", max_length=100)
-    category: str = Field(default="other")
-    tags: Optional[str] = Field(default=None, description="Comma-separated tags")
+    title: str = Field(..., min_length=3, max_length=200)
+    description: str = Field(..., min_length=10, max_length=2000)
+    category: Optional[str] = Field(default="other")
+    tags: Optional[List[str]] = Field(default=None)
     data: Dict[str, Any] = Field(..., description="GeoJSON FeatureCollection")
-    # Agent attribution
-    agent_id: Optional[str] = Field(default=None, description="ID of the agent uploading")
-    agent_name: Optional[str] = Field(default=None, description="Name of the agent")
-    email: Optional[str] = Field(default=None, description="Uploader email")
+
+    # Source info
+    source: Optional[SourceInfo] = None
+
+    # License
+    license: Optional[LicenseInfo] = None
+
+    # Coverage
+    region: Optional[str] = None
+
+    # Freshness
+    data_date: Optional[str] = None
+    update_frequency: Optional[str] = None
+
+    # Schema definition
+    schema_fields: Optional[List[SchemaField]] = Field(default=None, alias="schema")
+
+    # Agent attribution (for agent uploads)
+    agent_id: Optional[str] = Field(default=None)
+    agent_name: Optional[str] = Field(default=None)
+    # User attribution (for anonymous uploads)
+    email: Optional[str] = Field(default=None)
+
+    class Config:
+        populate_by_name = True
 
 
-class DatasetSummary(BaseModel):
-    """Dataset summary for list views."""
-    id: str
-    title: str
-    description: str
-    license: str
-    category: str
-    tags: Optional[str]
-    feature_count: int
-    geometry_types: str
-    bbox: List[float]  # [west, south, east, north]
-    query_count: int
-    used_in_maps: int
-    verified: bool
-    uploader_email: Optional[str]
-    agent_name: Optional[str]
-    created_at: str
-
-
-class DatasetCreateResponse(BaseModel):
-    """Response from dataset creation."""
-    success: bool
-    id: str
-    title: str
-    feature_count: int
-    points_awarded: int
+class DatasetSearchRequest(BaseModel):
+    """Request for keyword search."""
+    query: str = Field(..., min_length=1, max_length=500)
+    limit: int = Field(default=10, ge=1, le=100)
 
 
 # ==================== UTILITIES ====================
@@ -134,15 +162,23 @@ def generate_dataset_id() -> str:
 
 
 def validate_geojson(data: dict) -> dict:
-    """Validate and normalize GeoJSON, return metadata."""
+    """Validate and normalize GeoJSON, return computed metadata."""
     if data.get("type") != "FeatureCollection":
         raise HTTPException(status_code=400, detail="Data must be a GeoJSON FeatureCollection")
 
     features = data.get("features", [])
     if not features:
-        raise HTTPException(status_code=400, detail="FeatureCollection has no features")
+        raise HTTPException(status_code=400, detail="FeatureCollection must have at least 1 feature")
     if len(features) > 100_000:
         raise HTTPException(status_code=400, detail="Maximum 100,000 features per dataset")
+
+    # Check file size
+    data_size = len(json.dumps(data))
+    if data_size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset too large ({data_size // (1024*1024)}MB). Maximum is 50MB."
+        )
 
     geom_types = set()
     lngs, lats = [], []
@@ -157,6 +193,22 @@ def validate_geojson(data: dict) -> dict:
     if not lngs:
         raise HTTPException(status_code=400, detail="No valid coordinates found in features")
 
+    # Calculate completeness: fraction of features with all non-null properties
+    total_props = set()
+    for f in features:
+        for k in (f.get("properties") or {}).keys():
+            total_props.add(k)
+
+    if total_props:
+        complete_count = 0
+        for f in features:
+            props = f.get("properties") or {}
+            if all(props.get(k) is not None for k in total_props):
+                complete_count += 1
+        completeness = round(complete_count / len(features), 3)
+    else:
+        completeness = 1.0
+
     return {
         "feature_count": len(features),
         "geometry_types": ",".join(sorted(geom_types)),
@@ -164,7 +216,8 @@ def validate_geojson(data: dict) -> dict:
         "bbox_south": min(lats),
         "bbox_east": max(lngs),
         "bbox_north": max(lats),
-        "file_size_bytes": len(json.dumps(data)),
+        "file_size_bytes": data_size,
+        "completeness": completeness,
     }
 
 
@@ -196,15 +249,144 @@ def _extract_coords(geom: dict, lngs: list, lats: list):
                         lats.append(c[1])
 
 
+def _infer_schema(data: dict) -> list:
+    """Infer schema from GeoJSON feature properties."""
+    features = data.get("features", [])
+    if not features:
+        return []
+
+    # Collect property info from first few features
+    prop_info = {}
+    sample_size = min(len(features), 20)
+    for f in features[:sample_size]:
+        for k, v in (f.get("properties") or {}).items():
+            if k not in prop_info and v is not None:
+                if isinstance(v, bool):
+                    prop_info[k] = "boolean"
+                elif isinstance(v, int):
+                    prop_info[k] = "integer"
+                elif isinstance(v, float):
+                    prop_info[k] = "number"
+                else:
+                    prop_info[k] = "string"
+
+    return [{"name": k, "type": t, "description": ""} for k, t in prop_info.items()]
+
+
+def _format_dataset_metadata(ds: dict) -> dict:
+    """Format a dataset row into the rich metadata response format."""
+    # Parse tags from comma-separated string to array
+    tags_raw = ds.get("tags", "")
+    if isinstance(tags_raw, str) and tags_raw:
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    elif isinstance(tags_raw, list):
+        tags = tags_raw
+    else:
+        tags = []
+
+    # Parse schema_def from JSON string
+    schema_def = ds.get("schema_def")
+    if isinstance(schema_def, str):
+        try:
+            schema_def = json.loads(schema_def)
+        except (json.JSONDecodeError, TypeError):
+            schema_def = None
+
+    bbox = [
+        ds.get("bbox_west", 0) or 0,
+        ds.get("bbox_south", 0) or 0,
+        ds.get("bbox_east", 0) or 0,
+        ds.get("bbox_north", 0) or 0,
+    ]
+
+    geometry_types_raw = ds.get("geometry_types", "")
+    if isinstance(geometry_types_raw, str) and geometry_types_raw:
+        geometry_types = [t.strip() for t in geometry_types_raw.split(",")]
+    else:
+        geometry_types = []
+
+    # Compute usage_count from query_count + used_in_maps
+    usage_count = (ds.get("query_count", 0) or 0) + (ds.get("used_in_maps", 0) or 0)
+
+    # Determine creator info (prefer new fields, fall back to legacy)
+    creator_type = ds.get("creator_type")
+    creator_id = ds.get("creator_id")
+    creator_name = ds.get("creator_name")
+    if not creator_type:
+        if ds.get("agent_id"):
+            creator_type = "agent"
+            creator_id = ds.get("agent_id")
+            creator_name = ds.get("agent_name")
+        elif ds.get("uploader_id"):
+            creator_type = "user"
+            creator_id = str(ds.get("uploader_id"))
+        elif ds.get("uploader_email"):
+            creator_type = "user"
+            creator_id = ds.get("uploader_email")
+
+    return {
+        "id": ds["id"],
+        "title": ds["title"],
+        "description": ds.get("description", ""),
+        "category": ds.get("category", "other"),
+        "tags": tags,
+
+        "source": {
+            "name": ds.get("source_name") or "",
+            "url": ds.get("source_url") or "",
+        },
+
+        "license": {
+            "type": ds.get("license_type") or ds.get("license", "public-domain"),
+            "attribution_required": bool(ds.get("attribution_required", False)),
+            "commercial_use": bool(ds.get("commercial_use", True)),
+        },
+
+        "coverage": {
+            "bbox": bbox,
+            "region": ds.get("region") or "",
+        },
+
+        "freshness": {
+            "data_date": ds.get("data_date") or "",
+            "update_frequency": ds.get("update_frequency") or "",
+        },
+
+        "schema": schema_def or [],
+
+        "stats": {
+            "feature_count": ds.get("feature_count", 0),
+            "file_size_bytes": ds.get("file_size_bytes", 0),
+            "geometry_types": geometry_types,
+            "completeness": ds.get("completeness") or 0,
+        },
+
+        "creator": {
+            "type": creator_type or "",
+            "id": creator_id or "",
+            "name": creator_name or "",
+        },
+
+        "usage": {
+            "usage_count": usage_count,
+            "download_count": ds.get("download_count", 0) or 0,
+            "maps_using": ds.get("used_in_maps", 0) or 0,
+        },
+
+        "created_at": str(ds.get("created_at", "")),
+        "updated_at": str(ds.get("updated_at", "")),
+    }
+
+
 # ==================== ENDPOINTS ====================
 
-@router.post("/dataset", response_model=DatasetCreateResponse)
+@router.post("/datasets")
 async def create_dataset(
     body: DatasetCreateRequest,
     request: Request,
     authorization: Optional[str] = Header(None),
 ):
-    """Upload a public geospatial dataset to the registry.
+    """Upload a new geospatial dataset with rich metadata.
 
     Datasets become available for other agents and users to compose into maps.
     Uploaders earn points based on how often their data is used.
@@ -214,7 +396,7 @@ async def create_dataset(
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 20 datasets per hour.")
 
     # Validate category
-    if body.category not in DATASET_CATEGORIES:
+    if body.category and body.category not in DATASET_CATEGORIES:
         body.category = "other"
 
     # Validate GeoJSON
@@ -234,15 +416,42 @@ async def create_dataset(
         except Exception:
             pass
 
+    # Process tags
+    tags_str = ""
+    if body.tags:
+        tags_str = ",".join(body.tags)
+
+    # Process source info
+    source_name = body.source.name if body.source else None
+    source_url = body.source.url if body.source else None
+
+    # Process license info
+    license_info = body.license or LicenseInfo()
+    license_type = license_info.type
+    attribution_required = license_info.attribution_required
+    commercial_use = license_info.commercial_use
+
+    # Process schema — use provided or infer from data
+    schema_def = None
+    if body.schema_fields:
+        schema_def = [sf.model_dump() for sf in body.schema_fields]
+    else:
+        schema_def = _infer_schema(body.data)
+
+    # Determine creator info
+    creator_type = "agent" if body.agent_id else "user"
+    creator_id = body.agent_id or (str(user_id) if user_id else (user_email or "anonymous"))
+    creator_name = body.agent_name or ""
+
     dataset_id = generate_dataset_id()
 
     db_create_dataset(
         dataset_id=dataset_id,
         title=body.title,
         description=body.description,
-        license=body.license,
+        license=license_type,
         category=body.category,
-        tags=body.tags or "",
+        tags=tags_str,
         data=body.data,
         feature_count=meta["feature_count"],
         geometry_types=meta["geometry_types"],
@@ -255,11 +464,24 @@ async def create_dataset(
         uploader_email=user_email,
         agent_id=body.agent_id,
         agent_name=body.agent_name,
+        source_name=source_name,
+        source_url=source_url,
+        license_type=license_type,
+        attribution_required=attribution_required,
+        commercial_use=commercial_use,
+        region=body.region,
+        data_date=body.data_date,
+        update_frequency=body.update_frequency,
+        schema_def=schema_def,
+        completeness=meta["completeness"],
+        creator_type=creator_type,
+        creator_id=creator_id,
+        creator_name=creator_name,
     )
 
-    # Record contribution + award points (contribution-tier multiplier)
-    entity_type = "agent" if body.agent_id else "user"
-    entity_id = body.agent_id or (str(user_id) if user_id else (user_email or "anonymous"))
+    # Record contribution + award points
+    entity_type = creator_type
+    entity_id = creator_id
     pts = POINTS_DATASET_UPLOAD * get_points_multiplier(entity_type, entity_id)
 
     record_contribution(
@@ -280,200 +502,47 @@ async def create_dataset(
 
     logger.info(f"Dataset created: {dataset_id} ({meta['feature_count']} features) by {entity_type}:{entity_id}")
 
-    return DatasetCreateResponse(
-        success=True,
-        id=dataset_id,
-        title=body.title,
-        feature_count=meta["feature_count"],
-        points_awarded=pts,
-    )
+    return {
+        "id": dataset_id,
+        "title": body.title,
+        "url": f"/api/datasets/{dataset_id}",
+    }
 
 
-@router.get("/dataset/{dataset_id}")
-async def get_dataset(dataset_id: str):
-    """Get dataset metadata (without full data payload)."""
-    ds = db_get_dataset(dataset_id)
-    if not ds:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    # Don't return the full data in metadata endpoint
-    ds.pop("data", None)
-    return ds
-
-
-class DatasetUpdateRequest(BaseModel):
-    """Request to update a dataset's metadata."""
-    title: Optional[str] = Field(default=None, max_length=255)
-    description: Optional[str] = Field(default=None, max_length=2000)
-    category: Optional[str] = None
-    tags: Optional[str] = None
-
-
-@router.put("/dataset/{dataset_id}")
-async def update_dataset(
-    dataset_id: str,
-    body: DatasetUpdateRequest,
-    authorization: Optional[str] = Header(None),
-):
-    """Update a dataset's metadata. Only the uploader can update.
-
-    Requires authentication via Bearer token. The authenticated user must
-    be the original uploader of the dataset.
-    """
-    ds = db_get_dataset(dataset_id)
-    if not ds:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    # Require authentication
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    try:
-        from routers.auth import verify_jwt
-        token = authorization.split(" ")[1]
-        payload = verify_jwt(token)
-        if not payload:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        user_id = payload.get("sub")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    # Check ownership: uploader_id must match, or uploader_email must match
-    user_email = payload.get("email")
-    if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
-        raise HTTPException(status_code=403, detail="Not authorized to update this dataset")
-
-    # Validate category if provided
-    if body.category and body.category not in DATASET_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {', '.join(DATASET_CATEGORIES)}")
-
-    updated = db_update_dataset(
-        dataset_id=dataset_id,
-        title=body.title,
-        description=body.description,
-        category=body.category,
-        tags=body.tags,
-    )
-
-    if not updated:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    return {"success": True, "message": "Dataset updated", "id": dataset_id}
-
-
-@router.delete("/dataset/{dataset_id}")
-async def delete_dataset(
-    dataset_id: str,
-    authorization: Optional[str] = Header(None),
-):
-    """Delete a dataset from the registry. Only the uploader can delete.
-
-    Requires authentication via Bearer token. The authenticated user must
-    be the original uploader of the dataset.
-    """
-    ds = db_get_dataset(dataset_id)
-    if not ds:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    # Require authentication
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    try:
-        from routers.auth import verify_jwt
-        token = authorization.split(" ")[1]
-        payload = verify_jwt(token)
-        if not payload:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        user_id = payload.get("sub")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    # Check ownership
-    user_email = payload.get("email")
-    if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this dataset")
-
-    db_delete_dataset(dataset_id)
-    logger.info(f"Dataset deleted: {dataset_id} by user {user_id}")
-
-    return {"success": True, "message": "Dataset deleted", "id": dataset_id}
-
-
-@router.get("/dataset/{dataset_id}/geojson")
-async def get_dataset_geojson(
-    dataset_id: str,
+# Backward-compat alias
+@router.post("/dataset")
+async def create_dataset_compat(
+    body: DatasetCreateRequest,
     request: Request,
-    bbox: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
 ):
-    """Get the GeoJSON data for a dataset. Optionally filter by bounding box.
-
-    bbox format: west,south,east,north (e.g., -122.5,37.7,-122.4,37.8)
-    """
-    ds = db_get_dataset(dataset_id)
-    if not ds:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    increment_dataset_query_count(dataset_id)
-
-    # Reward dataset uploader when their data is queried
-    try:
-        uploader = get_dataset_uploader_info(dataset_id)
-        if uploader:
-            query_pts = POINTS_DATASET_QUERY * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
-            record_contribution(
-                action="dataset_query",
-                resource_type="dataset",
-                resource_id=dataset_id,
-                points_awarded=query_pts,
-                agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
-                user_email=uploader.get("entity_email"),
-                ip_address=request.client.host if request.client else None,
-            )
-            award_points(
-                uploader["entity_type"], uploader["entity_id"], query_pts,
-                field="data_queries_served", entity_email=uploader.get("entity_email"),
-            )
-    except Exception as e:
-        logger.warning(f"Failed to reward dataset uploader for query on {dataset_id}: {e}")
-
-    geojson = ds.get("data", {})
-
-    # Filter by bounding box if provided
-    if bbox:
-        try:
-            parts = [float(x) for x in bbox.split(",")]
-            if len(parts) == 4:
-                w, s, e, n = parts
-                filtered_features = []
-                for f in geojson.get("features", []):
-                    geom = f.get("geometry", {})
-                    if _feature_in_bbox(geom, w, s, e, n):
-                        filtered_features.append(f)
-                geojson = {"type": "FeatureCollection", "features": filtered_features}
-        except (ValueError, TypeError):
-            pass  # Invalid bbox, return full dataset
-
-    return geojson
+    """Backward-compatible alias for POST /api/datasets."""
+    return await create_dataset(body, request, authorization)
 
 
 @router.get("/datasets")
 async def list_datasets(
-    q: Optional[str] = None,
     category: Optional[str] = None,
+    tags: Optional[str] = None,
+    region: Optional[str] = None,
+    license: Optional[str] = None,
+    min_usage: Optional[int] = None,
+    sort: Optional[str] = Query(default="usage", pattern="^(usage|freshness|title)$"),
+    order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    # Legacy compat
+    q: Optional[str] = None,
     bbox: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    offset: Optional[int] = None,
 ):
-    """Search and list public datasets.
+    """List datasets with filters, sorting, and pagination.
 
-    Filterable by text query, category, and bounding box.
-    Results sorted by reputation score and query count.
+    Filterable by category, tags, region, license, and minimum usage.
     """
+    # Handle legacy offset param
+    actual_offset = offset if offset is not None else (page - 1) * limit
+
     bbox_parts = None
     if bbox:
         try:
@@ -491,32 +560,25 @@ async def list_datasets(
         bbox_east=bbox_parts[2] if bbox_parts else None,
         bbox_north=bbox_parts[3] if bbox_parts else None,
         limit=limit,
-        offset=offset,
+        offset=actual_offset,
     )
 
     total = get_dataset_count(category=category)
+    pages = max(1, math.ceil(total / limit)) if total > 0 else 1
 
     items = []
     for ds in datasets:
-        items.append({
-            "id": ds["id"],
-            "title": ds["title"],
-            "description": ds.get("description", ""),
-            "license": ds.get("license", "public-domain"),
-            "category": ds.get("category", "other"),
-            "tags": ds.get("tags", ""),
-            "feature_count": ds.get("feature_count", 0),
-            "geometry_types": ds.get("geometry_types", ""),
-            "bbox": [ds.get("bbox_west", 0), ds.get("bbox_south", 0),
-                     ds.get("bbox_east", 0), ds.get("bbox_north", 0)],
-            "query_count": ds.get("query_count", 0),
-            "used_in_maps": ds.get("used_in_maps", 0),
-            "verified": bool(ds.get("verified", False)),
-            "agent_name": ds.get("agent_name"),
-            "created_at": str(ds.get("created_at", "")),
-        })
+        items.append(_format_dataset_metadata(ds))
 
-    return {"datasets": items, "total": total, "limit": limit, "offset": offset}
+    return {
+        "datasets": items,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": pages,
+        },
+    }
 
 
 @router.get("/datasets/me")
@@ -545,19 +607,7 @@ async def list_my_datasets(
 
     items = []
     for ds in datasets:
-        items.append({
-            "id": ds["id"],
-            "title": ds["title"],
-            "description": ds.get("description", ""),
-            "category": ds.get("category", "other"),
-            "tags": ds.get("tags", ""),
-            "feature_count": ds.get("feature_count", 0),
-            "geometry_types": ds.get("geometry_types", ""),
-            "query_count": ds.get("query_count", 0),
-            "used_in_maps": ds.get("used_in_maps", 0),
-            "verified": bool(ds.get("verified", False)),
-            "created_at": str(ds.get("created_at", "")),
-        })
+        items.append(_format_dataset_metadata(ds))
 
     return {"datasets": items, "total": len(items)}
 
@@ -566,6 +616,294 @@ async def list_my_datasets(
 async def list_categories():
     """List available dataset categories."""
     return {"categories": DATASET_CATEGORIES}
+
+
+@router.post("/datasets/search")
+async def search_datasets(body: DatasetSearchRequest):
+    """Search datasets by keyword.
+
+    Searches in title, description, and tags.
+    """
+    datasets = db_search_datasets(
+        query=body.query,
+        limit=body.limit,
+        offset=0,
+    )
+
+    items = []
+    for ds in datasets:
+        items.append(_format_dataset_metadata(ds))
+
+    return {"datasets": items}
+
+
+@router.get("/datasets/{dataset_id}")
+async def get_dataset(dataset_id: str):
+    """Get dataset metadata (without full GeoJSON data)."""
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Remove full data from metadata response
+    ds.pop("data", None)
+    return _format_dataset_metadata(ds)
+
+
+# Backward-compat alias
+@router.get("/dataset/{dataset_id}")
+async def get_dataset_compat(dataset_id: str):
+    """Backward-compatible alias for GET /api/datasets/{id}."""
+    return await get_dataset(dataset_id)
+
+
+@router.get("/datasets/{dataset_id}/data")
+async def get_dataset_data(
+    dataset_id: str,
+    request: Request,
+):
+    """Get the full GeoJSON data for a dataset.
+
+    Tracks as a 'download' usage event and awards points to the creator.
+    """
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Track download usage
+    increment_download_count(dataset_id)
+    increment_dataset_query_count(dataset_id)
+
+    try:
+        record_dataset_usage(
+            dataset_id=dataset_id,
+            usage_type="download",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record dataset usage for {dataset_id}: {e}")
+
+    # Reward dataset creator
+    try:
+        uploader = get_dataset_uploader_info(dataset_id)
+        if uploader:
+            pts = POINTS_DATASET_DOWNLOAD * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
+            record_contribution(
+                action="dataset_download",
+                resource_type="dataset",
+                resource_id=dataset_id,
+                points_awarded=pts,
+                agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
+                user_email=uploader.get("entity_email"),
+                ip_address=request.client.host if request.client else None,
+            )
+            award_points(
+                uploader["entity_type"], uploader["entity_id"], pts,
+                field="data_queries_served", entity_email=uploader.get("entity_email"),
+            )
+    except Exception as e:
+        logger.warning(f"Failed to reward dataset creator for download of {dataset_id}: {e}")
+
+    geojson = ds.get("data", {})
+    if isinstance(geojson, str):
+        geojson = json.loads(geojson)
+
+    return geojson
+
+
+# Backward-compat alias
+@router.get("/dataset/{dataset_id}/geojson")
+async def get_dataset_geojson_compat(
+    dataset_id: str,
+    request: Request,
+    bbox: Optional[str] = None,
+):
+    """Backward-compatible alias for GET /api/datasets/{id}/data with bbox filter."""
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    increment_dataset_query_count(dataset_id)
+
+    try:
+        uploader = get_dataset_uploader_info(dataset_id)
+        if uploader:
+            query_pts = 1 * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
+            record_contribution(
+                action="dataset_query",
+                resource_type="dataset",
+                resource_id=dataset_id,
+                points_awarded=query_pts,
+                agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
+                user_email=uploader.get("entity_email"),
+                ip_address=request.client.host if request.client else None,
+            )
+            award_points(
+                uploader["entity_type"], uploader["entity_id"], query_pts,
+                field="data_queries_served", entity_email=uploader.get("entity_email"),
+            )
+    except Exception as e:
+        logger.warning(f"Failed to reward dataset uploader for query on {dataset_id}: {e}")
+
+    geojson = ds.get("data", {})
+    if isinstance(geojson, str):
+        geojson = json.loads(geojson)
+
+    # Filter by bounding box if provided
+    if bbox:
+        try:
+            parts = [float(x) for x in bbox.split(",")]
+            if len(parts) == 4:
+                w, s, e, n = parts
+                filtered_features = []
+                for f in geojson.get("features", []):
+                    geom = f.get("geometry", {})
+                    if _feature_in_bbox(geom, w, s, e, n):
+                        filtered_features.append(f)
+                geojson = {"type": "FeatureCollection", "features": filtered_features}
+        except (ValueError, TypeError):
+            pass
+
+    return geojson
+
+
+@router.get("/datasets/{dataset_id}/preview")
+async def get_dataset_preview(
+    dataset_id: str,
+    limit: int = Query(default=5, ge=1, le=100),
+):
+    """Get a preview of the dataset (first N features).
+
+    Returns a GeoJSON FeatureCollection with a limited number of features.
+    """
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    geojson = ds.get("data", {})
+    if isinstance(geojson, str):
+        geojson = json.loads(geojson)
+
+    features = geojson.get("features", [])[:limit]
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "_meta": {
+            "total_features": ds.get("feature_count", len(geojson.get("features", []))),
+            "preview_count": len(features),
+            "dataset_id": dataset_id,
+        },
+    }
+
+
+class DatasetUpdateRequest(BaseModel):
+    """Request to update a dataset's metadata."""
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    category: Optional[str] = None
+    tags: Optional[str] = None
+
+
+@router.put("/datasets/{dataset_id}")
+async def update_dataset(
+    dataset_id: str,
+    body: DatasetUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Update a dataset's metadata. Only the creator can update."""
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        from routers.auth import verify_jwt
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user_id = payload.get("sub")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_email = payload.get("email")
+    if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
+        raise HTTPException(status_code=403, detail="Not authorized to update this dataset")
+
+    if body.category and body.category not in DATASET_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {', '.join(DATASET_CATEGORIES)}")
+
+    updated = db_update_dataset(
+        dataset_id=dataset_id,
+        title=body.title,
+        description=body.description,
+        category=body.category,
+        tags=body.tags,
+    )
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    return {"success": True, "message": "Dataset updated", "id": dataset_id}
+
+
+# Backward-compat alias
+@router.put("/dataset/{dataset_id}")
+async def update_dataset_compat(
+    dataset_id: str,
+    body: DatasetUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Backward-compatible alias for PUT /api/datasets/{id}."""
+    return await update_dataset(dataset_id, body, authorization)
+
+
+@router.delete("/datasets/{dataset_id}")
+async def delete_dataset(
+    dataset_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Delete a dataset from the catalog. Only the creator can delete."""
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        from routers.auth import verify_jwt
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user_id = payload.get("sub")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_email = payload.get("email")
+    if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this dataset")
+
+    db_delete_dataset(dataset_id)
+    logger.info(f"Dataset deleted: {dataset_id} by user {user_id}")
+
+    return {"success": True, "message": "Dataset deleted", "id": dataset_id}
+
+
+# Backward-compat alias
+@router.delete("/dataset/{dataset_id}")
+async def delete_dataset_compat(
+    dataset_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Backward-compatible alias for DELETE /api/datasets/{id}."""
+    return await delete_dataset(dataset_id, authorization)
 
 
 # ==================== HELPERS ====================

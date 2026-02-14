@@ -217,6 +217,36 @@ def init_db():
 
                     CREATE INDEX IF NOT EXISTS idx_points_entity ON points_ledger(entity_type, entity_id);
                     CREATE INDEX IF NOT EXISTS idx_points_total ON points_ledger(total_points DESC);
+
+                    -- Dataset catalog enrichment columns
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS source_name VARCHAR(200);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS source_url TEXT;
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS license_type VARCHAR(50);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS attribution_required BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS commercial_use BOOLEAN DEFAULT TRUE;
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS region VARCHAR(200);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS data_date VARCHAR(20);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS update_frequency VARCHAR(50);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS schema_def JSONB;
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS completeness REAL;
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS download_count INTEGER DEFAULT 0;
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS creator_type VARCHAR(20);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS creator_id VARCHAR(100);
+                    ALTER TABLE datasets ADD COLUMN IF NOT EXISTS creator_name VARCHAR(200);
+
+                    -- Dataset usage tracking
+                    CREATE TABLE IF NOT EXISTS dataset_usage (
+                        id SERIAL PRIMARY KEY,
+                        dataset_id VARCHAR(50) REFERENCES datasets(id) ON DELETE CASCADE,
+                        usage_type VARCHAR(20),
+                        used_in_map_id VARCHAR(50),
+                        user_id INTEGER,
+                        agent_id VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_dataset_usage_dataset ON dataset_usage(dataset_id);
+                    CREATE INDEX IF NOT EXISTS idx_dataset_usage_type ON dataset_usage(usage_type);
                 """)
             conn.commit()
     else:
@@ -382,6 +412,36 @@ def init_db():
 
                 CREATE INDEX IF NOT EXISTS idx_points_entity ON points_ledger(entity_type, entity_id);
                 CREATE INDEX IF NOT EXISTS idx_points_total ON points_ledger(total_points DESC);
+            """)
+
+            # Dataset catalog enrichment columns (SQLite: try/except for each)
+            for col in [
+                "source_name TEXT", "source_url TEXT", "license_type TEXT",
+                "attribution_required INTEGER DEFAULT 0", "commercial_use INTEGER DEFAULT 1",
+                "region TEXT", "data_date TEXT", "update_frequency TEXT",
+                "schema_def TEXT", "completeness REAL",
+                "download_count INTEGER DEFAULT 0",
+                "creator_type TEXT", "creator_id TEXT", "creator_name TEXT",
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE datasets ADD COLUMN {col}")
+                except Exception:
+                    pass
+
+            # Dataset usage tracking
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS dataset_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dataset_id TEXT REFERENCES datasets(id) ON DELETE CASCADE,
+                    usage_type TEXT,
+                    used_in_map_id TEXT,
+                    user_id INTEGER,
+                    agent_id TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_dataset_usage_dataset ON dataset_usage(dataset_id);
+                CREATE INDEX IF NOT EXISTS idx_dataset_usage_type ON dataset_usage(usage_type);
             """)
 
     _db_initialized = True
@@ -696,10 +756,18 @@ def create_dataset(dataset_id: str, title: str, description: str, license: str,
                    geometry_types: str, bbox_west: float, bbox_south: float,
                    bbox_east: float, bbox_north: float, file_size_bytes: int = 0,
                    uploader_id: int = None, uploader_email: str = None,
-                   agent_id: str = None, agent_name: str = None) -> bool:
+                   agent_id: str = None, agent_name: str = None,
+                   source_name: str = None, source_url: str = None,
+                   license_type: str = None, attribution_required: bool = False,
+                   commercial_use: bool = True, region: str = None,
+                   data_date: str = None, update_frequency: str = None,
+                   schema_def: dict = None, completeness: float = None,
+                   creator_type: str = None, creator_id: str = None,
+                   creator_name: str = None) -> bool:
     """Create a new dataset in the registry."""
     ensure_db_initialized()
     data_str = json.dumps(data) if isinstance(data, dict) else data
+    schema_str = json.dumps(schema_def) if isinstance(schema_def, (dict, list)) else schema_def
 
     with get_db() as conn:
         if USE_POSTGRES:
@@ -708,23 +776,35 @@ def create_dataset(dataset_id: str, title: str, description: str, license: str,
                     INSERT INTO datasets (id, uploader_id, uploader_email, agent_id, agent_name,
                         title, description, license, category, tags, data,
                         feature_count, geometry_types, bbox_west, bbox_south, bbox_east, bbox_north,
-                        file_size_bytes)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        file_size_bytes, source_name, source_url, license_type,
+                        attribution_required, commercial_use, region, data_date,
+                        update_frequency, schema_def, completeness,
+                        creator_type, creator_id, creator_name)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (dataset_id, uploader_id, uploader_email, agent_id, agent_name,
                       title, description, license, category, tags, data_str,
                       feature_count, geometry_types, bbox_west, bbox_south, bbox_east, bbox_north,
-                      file_size_bytes))
+                      file_size_bytes, source_name, source_url, license_type,
+                      attribution_required, commercial_use, region, data_date,
+                      update_frequency, schema_str, completeness,
+                      creator_type, creator_id, creator_name))
         else:
             conn.execute("""
                 INSERT INTO datasets (id, uploader_id, uploader_email, agent_id, agent_name,
                     title, description, license, category, tags, data,
                     feature_count, geometry_types, bbox_west, bbox_south, bbox_east, bbox_north,
-                    file_size_bytes)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    file_size_bytes, source_name, source_url, license_type,
+                    attribution_required, commercial_use, region, data_date,
+                    update_frequency, schema_def, completeness,
+                    creator_type, creator_id, creator_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (dataset_id, uploader_id, uploader_email, agent_id, agent_name,
                   title, description, license, category, tags, data_str,
                   feature_count, geometry_types, bbox_west, bbox_south, bbox_east, bbox_north,
-                  file_size_bytes))
+                  file_size_bytes, source_name, source_url, license_type,
+                  1 if attribution_required else 0, 1 if commercial_use else 0,
+                  region, data_date, update_frequency, schema_str, completeness,
+                  creator_type, creator_id, creator_name))
     return True
 
 
@@ -1233,3 +1313,75 @@ def get_dataset_uploader_info(dataset_id: str) -> dict:
             "entity_email": row["uploader_email"],
         }
     return None
+
+
+# ==================== DATASET USAGE TRACKING ====================
+
+def record_dataset_usage(dataset_id: str, usage_type: str,
+                         used_in_map_id: str = None, user_id: int = None,
+                         agent_id: str = None) -> int:
+    """Record a dataset usage event. Returns the usage ID."""
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO dataset_usage (dataset_id, usage_type, used_in_map_id, user_id, agent_id)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
+                """, (dataset_id, usage_type, used_in_map_id, user_id, agent_id))
+                return cur.fetchone()[0]
+        else:
+            cur = conn.execute("""
+                INSERT INTO dataset_usage (dataset_id, usage_type, used_in_map_id, user_id, agent_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (dataset_id, usage_type, used_in_map_id, user_id, agent_id))
+            return cur.lastrowid
+
+
+def check_dataset_first_map_usage(dataset_id: str) -> bool:
+    """Check if this is the first time a dataset is used in a map.
+    Returns True if no prior 'map_layer' usage exists.
+    """
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM dataset_usage WHERE dataset_id = %s AND usage_type = 'map_layer' LIMIT 1",
+                    (dataset_id,))
+                return cur.fetchone() is None
+        else:
+            cur = conn.execute(
+                "SELECT 1 FROM dataset_usage WHERE dataset_id = ? AND usage_type = 'map_layer' LIMIT 1",
+                (dataset_id,))
+            return cur.fetchone() is None
+
+
+def increment_download_count(dataset_id: str) -> None:
+    """Increment the download count for a dataset."""
+    ensure_db_initialized()
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE datasets SET download_count = COALESCE(download_count, 0) + 1 WHERE id = %s",
+                    (dataset_id,))
+        else:
+            conn.execute(
+                "UPDATE datasets SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?",
+                (dataset_id,))
+
+
+def get_dataset_usage_count(dataset_id: str) -> int:
+    """Get total usage count for a dataset across all usage types."""
+    ensure_db_initialized()
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM dataset_usage WHERE dataset_id = %s", (dataset_id,))
+                return cur.fetchone()[0]
+        else:
+            cur = conn.execute("SELECT COUNT(*) FROM dataset_usage WHERE dataset_id = ?", (dataset_id,))
+            return cur.fetchone()[0]
