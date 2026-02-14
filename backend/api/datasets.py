@@ -22,6 +22,7 @@ from typing import Optional, List, Dict, Any
 import secrets
 import json
 import math
+import hashlib
 import logging
 
 from database import (
@@ -309,6 +310,7 @@ def _format_dataset_metadata(ds: dict) -> dict:
     usage_count = (ds.get("query_count", 0) or 0) + (ds.get("used_in_maps", 0) or 0)
 
     # Determine creator info (prefer new fields, fall back to legacy)
+    # PRIVACY: never expose email addresses in public responses
     creator_type = ds.get("creator_type")
     creator_id = ds.get("creator_id")
     creator_name = ds.get("creator_name")
@@ -322,7 +324,17 @@ def _format_dataset_metadata(ds: dict) -> dict:
             creator_id = str(ds.get("uploader_id"))
         elif ds.get("uploader_email"):
             creator_type = "user"
-            creator_id = ds.get("uploader_email")
+            # Anonymize email — never expose raw email in public API
+            anon_hash = hashlib.md5(ds["uploader_email"].encode()).hexdigest()[:8]
+            creator_id = f"user_{anon_hash}"
+            if not creator_name:
+                creator_name = f"Contributor_{anon_hash[:4].upper()}"
+    # Sanitize: if creator_id still looks like an email, anonymize it
+    if creator_id and "@" in str(creator_id):
+        anon_hash = hashlib.md5(str(creator_id).encode()).hexdigest()[:8]
+        creator_id = f"user_{anon_hash}"
+        if not creator_name:
+            creator_name = f"Contributor_{anon_hash[:4].upper()}"
 
     return {
         "id": ds["id"],
@@ -439,6 +451,9 @@ async def create_dataset(
         schema_def = _infer_schema(body.data)
 
     # Determine creator info
+    # TRUST BOUNDARY: agent_id is self-reported and unverified in Phase 1.
+    # We store it for attribution but only award points to authenticated users.
+    # Full agent verification (API keys / OAuth) is deferred to Phase 3.
     creator_type = "agent" if body.agent_id else "user"
     creator_id = body.agent_id or (str(user_id) if user_id else (user_email or "anonymous"))
     creator_name = body.agent_name or ""
@@ -479,26 +494,46 @@ async def create_dataset(
         creator_name=creator_name,
     )
 
-    # Record contribution + award points
-    entity_type = creator_type
-    entity_id = creator_id
-    pts = POINTS_DATASET_UPLOAD * get_points_multiplier(entity_type, entity_id)
+    # Award points only to verified identities:
+    # - Authenticated users (have valid JWT with user_id)
+    # - Unverified agent_id claims do NOT earn points (prevents impersonation/farming)
+    # Full agent auth (API keys) deferred to Phase 3
+    pts = 0
+    if user_id:
+        # Authenticated user — award points
+        entity_type = "user"
+        entity_id = str(user_id)
+        pts = POINTS_DATASET_UPLOAD * get_points_multiplier(entity_type, entity_id)
 
-    record_contribution(
-        action="dataset_upload",
-        resource_type="dataset",
-        resource_id=dataset_id,
-        points_awarded=pts,
-        user_id=user_id,
-        user_email=user_email,
-        agent_id=body.agent_id,
-        agent_name=body.agent_name,
-        metadata={"feature_count": meta["feature_count"], "category": body.category},
-        ip_address=request.client.host if request.client else None,
-    )
+        record_contribution(
+            action="dataset_upload",
+            resource_type="dataset",
+            resource_id=dataset_id,
+            points_awarded=pts,
+            user_id=user_id,
+            user_email=user_email,
+            agent_id=body.agent_id,
+            agent_name=body.agent_name,
+            metadata={"feature_count": meta["feature_count"], "category": body.category},
+            ip_address=request.client.host if request.client else None,
+        )
 
-    award_points(entity_type, entity_id, pts,
-                 field="datasets_uploaded", entity_email=user_email)
+        award_points(entity_type, entity_id, pts,
+                     field="datasets_uploaded", entity_email=user_email)
+    else:
+        # Unauthenticated upload — record contribution for tracking but no points
+        record_contribution(
+            action="dataset_upload",
+            resource_type="dataset",
+            resource_id=dataset_id,
+            points_awarded=0,
+            agent_id=body.agent_id,
+            agent_name=body.agent_name,
+            user_email=user_email,
+            metadata={"feature_count": meta["feature_count"], "category": body.category,
+                       "no_points_reason": "unauthenticated"},
+            ip_address=request.client.host if request.client else None,
+        )
 
     logger.info(f"Dataset created: {dataset_id} ({meta['feature_count']} features) by {entity_type}:{entity_id}")
 
@@ -660,16 +695,18 @@ async def get_dataset_compat(dataset_id: str):
 async def get_dataset_data(
     dataset_id: str,
     request: Request,
+    authorization: Optional[str] = Header(None),
 ):
     """Get the full GeoJSON data for a dataset.
 
-    Tracks as a 'download' usage event and awards points to the creator.
+    Download access is public. Points are only awarded to the dataset creator
+    when the requester is authenticated (to prevent anonymous point farming).
     """
     ds = db_get_dataset(dataset_id)
     if not ds:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Track download usage
+    # Always track download stats (counters only, no points)
     increment_download_count(dataset_id)
     increment_dataset_query_count(dataset_id)
 
@@ -681,26 +718,39 @@ async def get_dataset_data(
     except Exception as e:
         logger.warning(f"Failed to record dataset usage for {dataset_id}: {e}")
 
-    # Reward dataset creator
-    try:
-        uploader = get_dataset_uploader_info(dataset_id)
-        if uploader:
-            pts = POINTS_DATASET_DOWNLOAD * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
-            record_contribution(
-                action="dataset_download",
-                resource_type="dataset",
-                resource_id=dataset_id,
-                points_awarded=pts,
-                agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
-                user_email=uploader.get("entity_email"),
-                ip_address=request.client.host if request.client else None,
-            )
-            award_points(
-                uploader["entity_type"], uploader["entity_id"], pts,
-                field="data_queries_served", entity_email=uploader.get("entity_email"),
-            )
-    except Exception as e:
-        logger.warning(f"Failed to reward dataset creator for download of {dataset_id}: {e}")
+    # Only award points to creator when requester is authenticated
+    # This prevents anonymous point farming via repeated downloads
+    requester_authenticated = False
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from routers.auth import verify_jwt
+            token = authorization.split(" ")[1]
+            payload = verify_jwt(token)
+            if payload:
+                requester_authenticated = True
+        except Exception:
+            pass
+
+    if requester_authenticated:
+        try:
+            uploader = get_dataset_uploader_info(dataset_id)
+            if uploader:
+                pts = POINTS_DATASET_DOWNLOAD * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
+                record_contribution(
+                    action="dataset_download",
+                    resource_type="dataset",
+                    resource_id=dataset_id,
+                    points_awarded=pts,
+                    agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
+                    user_email=uploader.get("entity_email"),
+                    ip_address=request.client.host if request.client else None,
+                )
+                award_points(
+                    uploader["entity_type"], uploader["entity_id"], pts,
+                    field="data_queries_served", entity_email=uploader.get("entity_email"),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to reward dataset creator for download of {dataset_id}: {e}")
 
     geojson = ds.get("data", {})
     if isinstance(geojson, str):

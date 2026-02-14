@@ -500,19 +500,8 @@ async def create_map(
                     source_dataset_ids.append(layer_id)
                     increment_dataset_used_in_maps(layer_id)
 
-                    # Record usage in dataset_usage table
-                    try:
-                        record_dataset_usage(
-                            dataset_id=layer_id,
-                            usage_type="map_layer",
-                            used_in_map_id=None,  # map_id not yet generated
-                            user_id=user_id,
-                            agent_id=body.agent_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to record dataset usage for {layer_id}: {e}")
-
                     # Reward dataset uploader: 50 pts first use, 1 pt subsequent
+                    # IMPORTANT: check first-use BEFORE recording usage to avoid race
                     uploader = get_dataset_uploader_info(layer_id)
                     if uploader:
                         try:
@@ -533,6 +522,18 @@ async def create_map(
                             uploader["entity_type"], uploader["entity_id"], uploader_pts,
                             field="data_queries_served", entity_email=uploader.get("entity_email"),
                         )
+
+                    # Record usage AFTER first-use check to avoid race condition
+                    try:
+                        record_dataset_usage(
+                            dataset_id=layer_id,
+                            usage_type="map_layer",
+                            used_in_map_id=None,  # map_id not yet generated
+                            user_id=user_id,
+                            agent_id=body.agent_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record dataset usage for {layer_id}: {e}")
 
         bounds = body.bounds
         if bounds == "auto" or bounds is None:
