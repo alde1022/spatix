@@ -34,9 +34,30 @@ from database import (
 )
 from api.contributions import get_points_multiplier
 
+from datetime import datetime, timezone
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["datasets"])
+
+# Per-IP rate limiting for dataset creation
+_dataset_ip_requests: dict = {}
+DATASET_RATE_LIMIT_WINDOW = 3600  # 1 hour
+DATASET_RATE_LIMIT_MAX = 20  # 20 datasets per hour per IP
+
+def check_dataset_rate_limit(ip: str) -> bool:
+    now = datetime.now(timezone.utc)
+    if ip in _dataset_ip_requests:
+        _dataset_ip_requests[ip] = [
+            t for t in _dataset_ip_requests[ip]
+            if (now - t).total_seconds() < DATASET_RATE_LIMIT_WINDOW
+        ]
+    else:
+        _dataset_ip_requests[ip] = []
+    if len(_dataset_ip_requests[ip]) >= DATASET_RATE_LIMIT_MAX:
+        return False
+    _dataset_ip_requests[ip].append(now)
+    return True
 
 DATASET_CATEGORIES = [
     "boundaries",       # Countries, states, counties, zip codes, districts
@@ -188,6 +209,10 @@ async def create_dataset(
     Datasets become available for other agents and users to compose into maps.
     Uploaders earn points based on how often their data is used.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_dataset_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 20 datasets per hour.")
+
     # Validate category
     if body.category not in DATASET_CATEGORIES:
         body.category = "other"

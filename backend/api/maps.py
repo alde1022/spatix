@@ -472,11 +472,7 @@ async def create_map(
     if not check_rate_limit(client_ip, user_id):
         raise HTTPException(
             status_code=429,
-            detail={
-                "error": "RATE_LIMIT_EXCEEDED",
-                "message": f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour.",
-                "retry_after": 3600
-            }
+            detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} maps per hour. Try again later."
         )
 
     try:
@@ -596,7 +592,7 @@ async def create_map(
             id=map_id,
             url=map_url,
             embed=f'<iframe src="{map_url}?embed=1" width="600" height="400" frameborder="0"></iframe>',
-            preview_url=f"{base_url}/api/map/{map_id}/preview.png",
+            preview_url=f"{base_url}/m/{map_id}",
             delete_token=delete_token  # Return token to client for deletion
         )
 
@@ -899,8 +895,8 @@ async def list_maps_by_email(request: Request, email: str, limit: int = 100, off
 async def list_users(secret: str = None):
     """List all users (requires admin secret)."""
     import os
-    admin_secret = os.environ.get("JWT_SECRET", "")[:16]
-    if secret != admin_secret:
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or secret != admin_secret:
         raise HTTPException(status_code=403, detail="Invalid admin secret")
     
     from database import get_db, USE_POSTGRES
