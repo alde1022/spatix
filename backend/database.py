@@ -247,6 +247,64 @@ def init_db():
 
                     CREATE INDEX IF NOT EXISTS idx_dataset_usage_dataset ON dataset_usage(dataset_id);
                     CREATE INDEX IF NOT EXISTS idx_dataset_usage_type ON dataset_usage(usage_type);
+
+                    -- API keys for developer platform
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id VARCHAR(32) PRIMARY KEY,
+                        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        key_hash VARCHAR(64) UNIQUE NOT NULL,
+                        key_prefix VARCHAR(16) NOT NULL,
+                        name VARCHAR(100) NOT NULL,
+                        scopes JSONB DEFAULT '[]',
+                        rate_limit INTEGER,
+                        active BOOLEAN DEFAULT TRUE,
+                        request_count INTEGER DEFAULT 0,
+                        last_used_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+                    CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+                    CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(active);
+
+                    -- API key usage log (for per-hour/per-day analytics)
+                    CREATE TABLE IF NOT EXISTS api_key_usage (
+                        id SERIAL PRIMARY KEY,
+                        key_id VARCHAR(32) REFERENCES api_keys(id) ON DELETE CASCADE,
+                        endpoint VARCHAR(200),
+                        status_code INTEGER,
+                        ip_address TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_api_key_usage_key ON api_key_usage(key_id);
+                    CREATE INDEX IF NOT EXISTS idx_api_key_usage_created ON api_key_usage(created_at);
+
+                    -- Persistent geocode cache
+                    CREATE TABLE IF NOT EXISTS geocode_cache (
+                        cache_key VARCHAR(512) PRIMARY KEY,
+                        result JSONB NOT NULL,
+                        provider VARCHAR(20),
+                        query_text TEXT,
+                        hit_count INTEGER DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMP NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_geocode_cache_expires ON geocode_cache(expires_at);
+                    CREATE INDEX IF NOT EXISTS idx_geocode_cache_query ON geocode_cache(query_text);
+
+                    -- Spatial index registry (tracks spatial indices on datasets)
+                    CREATE TABLE IF NOT EXISTS spatial_index_registry (
+                        id SERIAL PRIMARY KEY,
+                        dataset_id VARCHAR(32) REFERENCES datasets(id) ON DELETE CASCADE,
+                        index_type VARCHAR(20) NOT NULL DEFAULT 'bbox',
+                        cell_resolution INTEGER,
+                        indexed_feature_count INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_spatial_registry_dataset ON spatial_index_registry(dataset_id);
                 """)
             conn.commit()
     else:
@@ -442,6 +500,66 @@ def init_db():
 
                 CREATE INDEX IF NOT EXISTS idx_dataset_usage_dataset ON dataset_usage(dataset_id);
                 CREATE INDEX IF NOT EXISTS idx_dataset_usage_type ON dataset_usage(usage_type);
+            """)
+
+            # API keys for developer platform
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    key_hash TEXT UNIQUE NOT NULL,
+                    key_prefix TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    scopes TEXT DEFAULT '[]',
+                    rate_limit INTEGER,
+                    active INTEGER DEFAULT 1,
+                    request_count INTEGER DEFAULT 0,
+                    last_used_at TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+                CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+                CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(active);
+
+                -- API key usage log
+                CREATE TABLE IF NOT EXISTS api_key_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key_id TEXT REFERENCES api_keys(id) ON DELETE CASCADE,
+                    endpoint TEXT,
+                    status_code INTEGER,
+                    ip_address TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_key_usage_key ON api_key_usage(key_id);
+                CREATE INDEX IF NOT EXISTS idx_api_key_usage_created ON api_key_usage(created_at);
+
+                -- Persistent geocode cache
+                CREATE TABLE IF NOT EXISTS geocode_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    result TEXT NOT NULL,
+                    provider TEXT,
+                    query_text TEXT,
+                    hit_count INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_geocode_cache_expires ON geocode_cache(expires_at);
+                CREATE INDEX IF NOT EXISTS idx_geocode_cache_query ON geocode_cache(query_text);
+
+                -- Spatial index registry
+                CREATE TABLE IF NOT EXISTS spatial_index_registry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dataset_id TEXT REFERENCES datasets(id) ON DELETE CASCADE,
+                    index_type TEXT NOT NULL DEFAULT 'bbox',
+                    cell_resolution INTEGER,
+                    indexed_feature_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_spatial_registry_dataset ON spatial_index_registry(dataset_id);
             """)
 
     _db_initialized = True
@@ -1385,3 +1503,215 @@ def get_dataset_usage_count(dataset_id: str) -> int:
         else:
             cur = conn.execute("SELECT COUNT(*) FROM dataset_usage WHERE dataset_id = ?", (dataset_id,))
             return cur.fetchone()[0]
+
+
+# ==================== GEOCODE CACHE (PERSISTENT) ====================
+
+def geocode_cache_get(cache_key: str) -> dict:
+    """Get a cached geocode result. Returns None if not found or expired."""
+    ensure_db_initialized()
+    ph = "%s" if USE_POSTGRES else "?"
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            from psycopg2.extras import RealDictCursor
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"""
+                    SELECT result, provider FROM geocode_cache
+                    WHERE cache_key = %s AND expires_at > NOW()
+                """, (cache_key,))
+                row = cur.fetchone()
+                if row:
+                    # Increment hit count
+                    cur.execute("UPDATE geocode_cache SET hit_count = hit_count + 1 WHERE cache_key = %s",
+                                (cache_key,))
+        else:
+            cur = conn.execute("""
+                SELECT result, provider FROM geocode_cache
+                WHERE cache_key = ? AND expires_at > datetime('now')
+            """, (cache_key,))
+            row = cur.fetchone()
+            if row:
+                conn.execute("UPDATE geocode_cache SET hit_count = hit_count + 1 WHERE cache_key = ?",
+                             (cache_key,))
+
+    if not row:
+        return None
+    row = dict(row)
+    result = row.get("result")
+    if isinstance(result, str):
+        return json.loads(result)
+    return result
+
+
+def geocode_cache_set(cache_key: str, result, provider: str = None,
+                      query_text: str = None, ttl_seconds: int = 86400):
+    """Store a geocode result in the persistent cache. Default TTL: 24 hours."""
+    ensure_db_initialized()
+    result_str = json.dumps(result) if not isinstance(result, str) else result
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO geocode_cache (cache_key, result, provider, query_text, expires_at)
+                    VALUES (%s, %s, %s, %s, NOW() + make_interval(secs => %s))
+                    ON CONFLICT (cache_key) DO UPDATE
+                    SET result = EXCLUDED.result,
+                        provider = EXCLUDED.provider,
+                        hit_count = geocode_cache.hit_count + 1,
+                        expires_at = NOW() + make_interval(secs => %s)
+                """, (cache_key, result_str, provider, query_text, ttl_seconds, ttl_seconds))
+        else:
+            from datetime import timedelta
+            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+            conn.execute("""
+                INSERT OR REPLACE INTO geocode_cache (cache_key, result, provider, query_text, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (cache_key, result_str, provider, query_text, expires_at))
+
+
+def geocode_cache_stats() -> dict:
+    """Get persistent cache statistics."""
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            from psycopg2.extras import RealDictCursor
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT
+                        COUNT(*) as total_entries,
+                        COUNT(*) FILTER (WHERE expires_at > NOW()) as active_entries,
+                        COALESCE(SUM(hit_count), 0) as total_hits,
+                        COUNT(DISTINCT provider) as providers_used
+                    FROM geocode_cache
+                """)
+                row = cur.fetchone()
+        else:
+            cur = conn.execute("""
+                SELECT
+                    COUNT(*) as total_entries,
+                    SUM(CASE WHEN expires_at > datetime('now') THEN 1 ELSE 0 END) as active_entries,
+                    COALESCE(SUM(hit_count), 0) as total_hits,
+                    COUNT(DISTINCT provider) as providers_used
+                FROM geocode_cache
+            """)
+            row = cur.fetchone()
+
+    return dict(row) if row else {
+        "total_entries": 0, "active_entries": 0, "total_hits": 0, "providers_used": 0
+    }
+
+
+def geocode_cache_cleanup():
+    """Remove expired cache entries."""
+    ensure_db_initialized()
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM geocode_cache WHERE expires_at < NOW()")
+                return cur.rowcount
+        else:
+            cur = conn.execute("DELETE FROM geocode_cache WHERE expires_at < datetime('now')")
+            return cur.rowcount
+
+
+# ==================== SPATIAL QUERIES ====================
+
+def spatial_query_intersects(bbox_west: float, bbox_south: float,
+                             bbox_east: float, bbox_north: float,
+                             category: str = None, limit: int = 50) -> list:
+    """Find datasets whose bounding box intersects the given bbox.
+
+    This is the foundation for spatial indexing — bounding box intersection
+    using the existing bbox columns on the datasets table.
+    PostGIS upgrade path: replace with ST_Intersects on geometry column.
+    """
+    ensure_db_initialized()
+    ph = "%s" if USE_POSTGRES else "?"
+
+    conditions = [
+        f"public = {'TRUE' if USE_POSTGRES else '1'}",
+        f"bbox_east >= {ph}",    # dataset's east >= query west
+        f"bbox_west <= {ph}",    # dataset's west <= query east
+        f"bbox_north >= {ph}",   # dataset's north >= query south
+        f"bbox_south <= {ph}",   # dataset's south <= query north
+    ]
+    params = [bbox_west, bbox_east, bbox_south, bbox_north]
+
+    if category:
+        conditions.append(f"category = {ph}")
+        params.append(category)
+
+    params.append(limit)
+    where = " AND ".join(conditions)
+
+    with get_db() as conn:
+        if USE_POSTGRES:
+            from psycopg2.extras import RealDictCursor
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"""
+                    SELECT id, title, description, category, tags,
+                           feature_count, geometry_types,
+                           bbox_west, bbox_south, bbox_east, bbox_north,
+                           reputation_score, created_at
+                    FROM datasets WHERE {where}
+                    ORDER BY reputation_score DESC
+                    LIMIT %s
+                """, params)
+                rows = cur.fetchall()
+        else:
+            cur = conn.execute(f"""
+                SELECT id, title, description, category, tags,
+                       feature_count, geometry_types,
+                       bbox_west, bbox_south, bbox_east, bbox_north,
+                       reputation_score, created_at
+                FROM datasets WHERE {where}
+                ORDER BY reputation_score DESC
+                LIMIT ?
+            """, params)
+            rows = cur.fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def spatial_query_nearby(lat: float, lng: float, radius_km: float = 50,
+                         category: str = None, limit: int = 50) -> list:
+    """Find datasets near a point.
+
+    Uses bounding box approximation (1 degree ~ 111km latitude).
+    PostGIS upgrade path: replace with ST_DWithin on geometry column.
+    """
+    import math
+
+    lat_delta = radius_km / 111.0
+    lng_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
+
+    bbox_west = lng - lng_delta
+    bbox_east = lng + lng_delta
+    bbox_south = lat - lat_delta
+    bbox_north = lat + lat_delta
+
+    results = spatial_query_intersects(bbox_west, bbox_south, bbox_east, bbox_north,
+                                       category=category, limit=limit * 2)
+
+    # Calculate approximate distance and sort by proximity
+    scored = []
+    for r in results:
+        # Distance from query point to center of dataset bbox
+        ds_center_lat = (r.get("bbox_south", 0) + r.get("bbox_north", 0)) / 2
+        ds_center_lng = (r.get("bbox_west", 0) + r.get("bbox_east", 0)) / 2
+
+        dist = math.sqrt(
+            ((lat - ds_center_lat) * 111) ** 2 +
+            ((lng - ds_center_lng) * 111 * math.cos(math.radians(lat))) ** 2
+        )
+
+        if dist <= radius_km:
+            r["distance_km"] = round(dist, 2)
+            scored.append(r)
+
+    scored.sort(key=lambda x: x.get("distance_km", float("inf")))
+    return scored[:limit]

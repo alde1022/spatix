@@ -77,6 +77,8 @@ def _cache_key_reverse(lat: float, lng: float, zoom: int) -> str:
 
 
 def _cache_get(key: str) -> Any:
+    """Two-tier cache: L1 (in-memory) → L2 (database)."""
+    # L1: in-memory
     if key in _geocode_cache:
         result, ts = _geocode_cache[key]
         if (datetime.now(timezone.utc) - ts).total_seconds() < GEOCODE_CACHE_TTL:
@@ -84,16 +86,41 @@ def _cache_get(key: str) -> Any:
             return result
         else:
             del _geocode_cache[key]
+
+    # L2: persistent database cache
+    try:
+        from database import geocode_cache_get
+        db_result = geocode_cache_get(key)
+        if db_result is not None:
+            # Promote to L1
+            _geocode_cache[key] = (db_result, datetime.now(timezone.utc))
+            _cache_stats["hits"] += 1
+            return db_result
+    except Exception as e:
+        logger.debug(f"DB cache lookup failed (non-critical): {e}")
+
     _cache_stats["misses"] += 1
     return None
 
 
 def _cache_set(key: str, value: Any):
-    # Evict oldest entries if cache is too large
+    """Write to both L1 (in-memory) and L2 (database)."""
+    # L1: in-memory
     if len(_geocode_cache) >= GEOCODE_CACHE_MAX_SIZE:
         oldest_key = min(_geocode_cache, key=lambda k: _geocode_cache[k][1])
         del _geocode_cache[oldest_key]
     _geocode_cache[key] = (value, datetime.now(timezone.utc))
+
+    # L2: persistent database cache (non-blocking, best-effort)
+    try:
+        from database import geocode_cache_set
+        # Extract query text from cache key for searchability
+        query_text = key.split(":", 1)[1].rsplit(":", 2)[0] if ":" in key else key
+        provider = GEOCODE_PROVIDER
+        geocode_cache_set(key, value, provider=provider, query_text=query_text,
+                         ttl_seconds=GEOCODE_CACHE_TTL)
+    except Exception as e:
+        logger.debug(f"DB cache write failed (non-critical): {e}")
 
 
 # Concurrency semaphore for batch operations
@@ -464,14 +491,30 @@ async def geocode_reverse(lat: float, lng: float, zoom: int = 18) -> dict:
 
 
 def get_cache_stats() -> Dict[str, Any]:
-    """Return cache statistics."""
+    """Return cache statistics (L1 in-memory + L2 persistent)."""
+    # L2 persistent stats
+    db_stats = {}
+    try:
+        from database import geocode_cache_stats
+        db_stats = geocode_cache_stats()
+    except Exception:
+        pass
+
     return {
-        "hits": _cache_stats["hits"],
-        "misses": _cache_stats["misses"],
-        "size": len(_geocode_cache),
-        "max_size": GEOCODE_CACHE_MAX_SIZE,
+        "l1_memory": {
+            "hits": _cache_stats["hits"],
+            "misses": _cache_stats["misses"],
+            "size": len(_geocode_cache),
+            "max_size": GEOCODE_CACHE_MAX_SIZE,
+            "hit_rate": round(_cache_stats["hits"] / max(_cache_stats["hits"] + _cache_stats["misses"], 1) * 100, 1),
+        },
+        "l2_persistent": {
+            "total_entries": db_stats.get("total_entries", 0),
+            "active_entries": db_stats.get("active_entries", 0),
+            "total_hits": db_stats.get("total_hits", 0),
+            "providers_used": db_stats.get("providers_used", 0),
+        },
         "ttl_seconds": GEOCODE_CACHE_TTL,
-        "hit_rate": round(_cache_stats["hits"] / max(_cache_stats["hits"] + _cache_stats["misses"], 1) * 100, 1),
         "primary_provider": GEOCODE_PROVIDER,
     }
 
