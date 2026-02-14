@@ -535,7 +535,7 @@ async def create_dataset(
             ip_address=request.client.host if request.client else None,
         )
 
-    logger.info(f"Dataset created: {dataset_id} ({meta['feature_count']} features) by {entity_type}:{entity_id}")
+    logger.info(f"Dataset created: {dataset_id} ({meta['feature_count']} features) by {creator_type}:{creator_id}")
 
     return {
         "id": dataset_id,
@@ -764,6 +764,7 @@ async def get_dataset_data(
 async def get_dataset_geojson_compat(
     dataset_id: str,
     request: Request,
+    authorization: Optional[str] = Header(None),
     bbox: Optional[str] = None,
 ):
     """Backward-compatible alias for GET /api/datasets/{id}/data with bbox filter."""
@@ -773,9 +774,22 @@ async def get_dataset_geojson_compat(
 
     increment_dataset_query_count(dataset_id)
 
+    # Only reward dataset uploader when requester is authenticated
+    requester_authenticated = False
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from routers.auth import verify_jwt
+            token = authorization.split(" ")[1]
+            payload = verify_jwt(token)
+            if payload:
+                requester_authenticated = True
+        except Exception:
+            pass
+
+
     try:
         uploader = get_dataset_uploader_info(dataset_id)
-        if uploader:
+        if uploader and requester_authenticated:
             query_pts = 1 * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
             record_contribution(
                 action="dataset_query",
