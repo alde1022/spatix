@@ -257,26 +257,30 @@ async def create_dataset(
         agent_name=body.agent_name,
     )
 
-    # Record contribution + award points (contribution-tier multiplier)
+    # Always define entity identifiers for logging (safe even when unauth)
     entity_type = "agent" if body.agent_id else "user"
     entity_id = body.agent_id or (str(user_id) if user_id else (user_email or "anonymous"))
-    pts = POINTS_DATASET_UPLOAD * get_points_multiplier(entity_type, entity_id)
 
-    record_contribution(
-        action="dataset_upload",
-        resource_type="dataset",
-        resource_id=dataset_id,
-        points_awarded=pts,
-        user_id=user_id,
-        user_email=user_email,
-        agent_id=body.agent_id,
-        agent_name=body.agent_name,
-        metadata={"feature_count": meta["feature_count"], "category": body.category},
-        ip_address=request.client.host if request.client else None,
-    )
+    # Only award points to authenticated uploaders (user_id from JWT or verified agent)
+    pts = 0
+    if user_id or body.agent_id:
+        pts = POINTS_DATASET_UPLOAD * get_points_multiplier(entity_type, entity_id)
 
-    award_points(entity_type, entity_id, pts,
-                 field="datasets_uploaded", entity_email=user_email)
+        record_contribution(
+            action="dataset_upload",
+            resource_type="dataset",
+            resource_id=dataset_id,
+            points_awarded=pts,
+            user_id=user_id,
+            user_email=user_email,
+            agent_id=body.agent_id,
+            agent_name=body.agent_name,
+            metadata={"feature_count": meta["feature_count"], "category": body.category},
+            ip_address=request.client.host if request.client else None,
+        )
+
+        award_points(entity_type, entity_id, pts,
+                     field="datasets_uploaded", entity_email=user_email)
 
     logger.info(f"Dataset created: {dataset_id} ({meta['feature_count']} features) by {entity_type}:{entity_id}")
 
@@ -409,6 +413,7 @@ async def get_dataset_geojson(
     dataset_id: str,
     request: Request,
     bbox: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
 ):
     """Get the GeoJSON data for a dataset. Optionally filter by bounding box.
 
@@ -420,26 +425,37 @@ async def get_dataset_geojson(
 
     increment_dataset_query_count(dataset_id)
 
-    # Reward dataset uploader when their data is queried
-    try:
-        uploader = get_dataset_uploader_info(dataset_id)
-        if uploader:
-            query_pts = POINTS_DATASET_QUERY * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
-            record_contribution(
-                action="dataset_query",
-                resource_type="dataset",
-                resource_id=dataset_id,
-                points_awarded=query_pts,
-                agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
-                user_email=uploader.get("entity_email"),
-                ip_address=request.client.host if request.client else None,
-            )
-            award_points(
-                uploader["entity_type"], uploader["entity_id"], query_pts,
-                field="data_queries_served", entity_email=uploader.get("entity_email"),
-            )
-    except Exception as e:
-        logger.warning(f"Failed to reward dataset uploader for query on {dataset_id}: {e}")
+    # Only reward dataset uploader when requester is authenticated
+    requester_authenticated = False
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from routers.auth import verify_jwt
+            token = authorization.split(" ")[1]
+            verify_jwt(token)
+            requester_authenticated = True
+        except Exception:
+            pass
+
+    if requester_authenticated:
+        try:
+            uploader = get_dataset_uploader_info(dataset_id)
+            if uploader:
+                query_pts = POINTS_DATASET_QUERY * get_points_multiplier(uploader["entity_type"], uploader["entity_id"])
+                record_contribution(
+                    action="dataset_query",
+                    resource_type="dataset",
+                    resource_id=dataset_id,
+                    points_awarded=query_pts,
+                    agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
+                    user_email=uploader.get("entity_email"),
+                    ip_address=request.client.host if request.client else None,
+                )
+                award_points(
+                    uploader["entity_type"], uploader["entity_id"], query_pts,
+                    field="data_queries_served", entity_email=uploader.get("entity_email"),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to reward dataset uploader for query on {dataset_id}: {e}")
 
     geojson = ds.get("data", {})
 
