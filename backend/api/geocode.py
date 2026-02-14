@@ -7,10 +7,11 @@ POST /api/geocode - Convert address/place to coordinates
 POST /api/geocode/reverse - Convert coordinates to address
 POST /api/geocode/batch - Geocode multiple addresses at once
 GET /api/places/search - Search for places/POIs
+GET /api/geocode/cache-stats - View cache hit/miss statistics
 """
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import httpx
 import asyncio
 import os
@@ -40,14 +41,63 @@ def check_geocode_rate_limit(ip: str) -> bool:
     _geocode_ip_requests[ip].append(now)
     return True
 
+# ==================== PROVIDER CONFIGURATION ====================
+
 # Nominatim (OpenStreetMap) - free, no API key required
-NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
+NOMINATIM_BASE = os.environ.get("NOMINATIM_BASE", "https://nominatim.openstreetmap.org")
 USER_AGENT = "Spatix/1.0 (https://spatix.io)"
+
+# Photon (komoot) - free, no API key, OSM-based, no strict rate limit
+PHOTON_BASE = os.environ.get("PHOTON_BASE", "https://photon.komoot.de")
+
+# Primary provider: "nominatim" or "photon"
+GEOCODE_PROVIDER = os.environ.get("GEOCODE_PROVIDER", "nominatim").lower()
 
 # Rate limiting for Nominatim (max 1 req/sec as per their policy)
 _last_nominatim_request: datetime = None
 _nominatim_lock = asyncio.Lock()
 NOMINATIM_RATE_LIMIT = 1.0  # seconds between requests
+
+# ==================== CACHE ====================
+
+# In-memory cache: key -> (result, timestamp)
+_geocode_cache: Dict[str, Tuple[Any, datetime]] = {}
+GEOCODE_CACHE_TTL = int(os.environ.get("GEOCODE_CACHE_TTL", 3600))  # 1 hour default
+GEOCODE_CACHE_MAX_SIZE = 10000
+
+_cache_stats = {"hits": 0, "misses": 0}
+
+
+def _cache_key_forward(query: str, limit: int, country: Optional[str]) -> str:
+    return f"fwd:{query.strip().lower()}:{limit}:{country or ''}"
+
+
+def _cache_key_reverse(lat: float, lng: float, zoom: int) -> str:
+    return f"rev:{lat:.6f}:{lng:.6f}:{zoom}"
+
+
+def _cache_get(key: str) -> Any:
+    if key in _geocode_cache:
+        result, ts = _geocode_cache[key]
+        if (datetime.now(timezone.utc) - ts).total_seconds() < GEOCODE_CACHE_TTL:
+            _cache_stats["hits"] += 1
+            return result
+        else:
+            del _geocode_cache[key]
+    _cache_stats["misses"] += 1
+    return None
+
+
+def _cache_set(key: str, value: Any):
+    # Evict oldest entries if cache is too large
+    if len(_geocode_cache) >= GEOCODE_CACHE_MAX_SIZE:
+        oldest_key = min(_geocode_cache, key=lambda k: _geocode_cache[k][1])
+        del _geocode_cache[oldest_key]
+    _geocode_cache[key] = (value, datetime.now(timezone.utc))
+
+
+# Concurrency semaphore for batch operations
+_batch_semaphore = asyncio.Semaphore(5)
 
 
 # ==================== MODELS ====================
@@ -75,6 +125,7 @@ class GeocodeResponse(BaseModel):
     success: bool
     results: List[GeocodeResult]
     query: str
+    cached: bool = False
 
 
 class ReverseGeocodeRequest(BaseModel):
@@ -146,7 +197,7 @@ class PlaceSearchResponse(BaseModel):
     total: int
 
 
-# ==================== UTILITIES ====================
+# ==================== NOMINATIM PROVIDER ====================
 
 async def rate_limit_nominatim():
     """Ensure we don't exceed Nominatim's rate limit."""
@@ -210,7 +261,7 @@ async def nominatim_reverse(lat: float, lng: float, zoom: int = 18) -> dict:
 def parse_nominatim_result(result: dict) -> GeocodeResult:
     """Parse a Nominatim result into our format."""
     bbox = None
-    if "boundingbox" in result:
+    if result.get("boundingbox"):
         bb = result["boundingbox"]
         bbox = [float(bb[2]), float(bb[0]), float(bb[3]), float(bb[1])]  # [min_lng, min_lat, max_lng, max_lat]
 
@@ -223,6 +274,206 @@ def parse_nominatim_result(result: dict) -> GeocodeResult:
         bbox=bbox,
         address=result.get("address")
     )
+
+
+# ==================== PHOTON PROVIDER ====================
+
+async def photon_search(query: str, limit: int = 1, country: str = None) -> List[dict]:
+    """Search using Photon (komoot). Returns results in Nominatim-compatible format."""
+    params = {
+        "q": query,
+        "limit": limit,
+        "lang": "en",
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{PHOTON_BASE}/api",
+            params=params,
+            headers={"User-Agent": USER_AGENT},
+            timeout=10.0
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    # Convert Photon GeoJSON features to Nominatim-compatible dicts
+    results = []
+    for feature in data.get("features", []):
+        props = feature.get("properties", {})
+        geom = feature.get("geometry", {})
+        coords = geom.get("coordinates", [0, 0])
+
+        # Filter by country if specified
+        if country and props.get("countrycode", "").lower() != country.lower():
+            continue
+
+        # Build address dict from Photon properties
+        address = {}
+        for key in ["name", "street", "housenumber", "postcode", "city",
+                     "state", "country", "countrycode"]:
+            if key in props:
+                address[key] = props[key]
+
+        # Build display_name from available components
+        name_parts = []
+        if props.get("name"):
+            name_parts.append(props["name"])
+        if props.get("street"):
+            street = props["street"]
+            if props.get("housenumber"):
+                street = f"{props['housenumber']} {street}"
+            name_parts.append(street)
+        if props.get("city"):
+            name_parts.append(props["city"])
+        if props.get("state"):
+            name_parts.append(props["state"])
+        if props.get("country"):
+            name_parts.append(props["country"])
+        display_name = ", ".join(name_parts) if name_parts else query
+
+        # Build bbox from extent if available
+        bbox = None
+        if "extent" in props:
+            ext = props["extent"]  # [min_lng, max_lat, max_lng, min_lat]
+            bbox = [str(ext[3]), str(ext[1]), str(ext[0]), str(ext[2])]
+
+        result_dict = {
+            "lat": str(coords[1]),
+            "lon": str(coords[0]),
+            "display_name": display_name,
+            "type": props.get("type", props.get("osm_value", "unknown")),
+            "category": props.get("osm_key", "place"),
+            "importance": 0.5,
+            "address": address,
+        }
+        if bbox is not None:
+            result_dict["boundingbox"] = bbox
+        results.append(result_dict)
+
+    return results
+
+
+async def photon_reverse(lat: float, lng: float, zoom: int = 18) -> dict:
+    """Reverse geocode using Photon. Returns Nominatim-compatible dict."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{PHOTON_BASE}/reverse",
+            params={"lat": lat, "lon": lng},
+            headers={"User-Agent": USER_AGENT},
+            timeout=10.0
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    features = data.get("features", [])
+    if not features:
+        return {"error": "No results found"}
+
+    props = features[0].get("properties", {})
+    geom = features[0].get("geometry", {})
+    coords = geom.get("coordinates", [lng, lat])
+
+    address = {}
+    for key in ["name", "street", "housenumber", "postcode", "city",
+                 "state", "country", "countrycode"]:
+        if key in props:
+            address[key] = props[key]
+
+    name_parts = []
+    if props.get("name"):
+        name_parts.append(props["name"])
+    if props.get("street"):
+        street = props["street"]
+        if props.get("housenumber"):
+            street = f"{props['housenumber']} {street}"
+        name_parts.append(street)
+    if props.get("city"):
+        name_parts.append(props["city"])
+    if props.get("state"):
+        name_parts.append(props["state"])
+    if props.get("country"):
+        name_parts.append(props["country"])
+
+    return {
+        "lat": str(coords[1]),
+        "lon": str(coords[0]),
+        "display_name": ", ".join(name_parts) if name_parts else "Unknown",
+        "type": props.get("type", props.get("osm_value", "unknown")),
+        "category": props.get("osm_key", "place"),
+        "address": address,
+    }
+
+
+# ==================== DISPATCHER (CACHE + FALLBACK) ====================
+
+async def geocode_search(query: str, limit: int = 1, country: str = None) -> List[dict]:
+    """
+    Cached geocode search with provider fallback.
+    1. Check cache
+    2. Try primary provider
+    3. Fall back to secondary provider on failure
+    """
+    cache_key = _cache_key_forward(query, limit, country)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    primary_fn = nominatim_search if GEOCODE_PROVIDER == "nominatim" else photon_search
+    fallback_fn = photon_search if GEOCODE_PROVIDER == "nominatim" else nominatim_search
+
+    try:
+        results = await primary_fn(query, limit, country)
+        _cache_set(cache_key, results)
+        return results
+    except Exception as primary_err:
+        logger.warning(f"Primary geocoder ({GEOCODE_PROVIDER}) failed for '{query}': {primary_err}")
+        try:
+            results = await fallback_fn(query, limit, country)
+            _cache_set(cache_key, results)
+            return results
+        except Exception as fallback_err:
+            logger.error(f"Fallback geocoder also failed for '{query}': {fallback_err}")
+            raise primary_err
+
+
+async def geocode_reverse(lat: float, lng: float, zoom: int = 18) -> dict:
+    """
+    Cached reverse geocode with provider fallback.
+    """
+    cache_key = _cache_key_reverse(lat, lng, zoom)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    primary_fn = nominatim_reverse if GEOCODE_PROVIDER == "nominatim" else photon_reverse
+    fallback_fn = photon_reverse if GEOCODE_PROVIDER == "nominatim" else nominatim_reverse
+
+    try:
+        result = await primary_fn(lat, lng, zoom)
+        _cache_set(cache_key, result)
+        return result
+    except Exception as primary_err:
+        logger.warning(f"Primary reverse geocoder ({GEOCODE_PROVIDER}) failed: {primary_err}")
+        try:
+            result = await fallback_fn(lat, lng, zoom)
+            _cache_set(cache_key, result)
+            return result
+        except Exception as fallback_err:
+            logger.error(f"Fallback reverse geocoder also failed: {fallback_err}")
+            raise primary_err
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Return cache statistics."""
+    return {
+        "hits": _cache_stats["hits"],
+        "misses": _cache_stats["misses"],
+        "size": len(_geocode_cache),
+        "max_size": GEOCODE_CACHE_MAX_SIZE,
+        "ttl_seconds": GEOCODE_CACHE_TTL,
+        "hit_rate": round(_cache_stats["hits"] / max(_cache_stats["hits"] + _cache_stats["misses"], 1) * 100, 1),
+        "primary_provider": GEOCODE_PROVIDER,
+    }
 
 
 # ==================== ENDPOINTS ====================
@@ -239,15 +490,21 @@ async def geocode(body: GeocodeRequest):
     - "90210" (with country="us")
 
     Returns coordinates, formatted address, and bounding box.
+    Uses caching and automatic provider fallback.
     """
     try:
-        results = await nominatim_search(body.query, body.limit, body.country)
+        cache_key = _cache_key_forward(body.query, body.limit, body.country)
+        was_cached = cache_key in _geocode_cache and \
+            (datetime.now(timezone.utc) - _geocode_cache[cache_key][1]).total_seconds() < GEOCODE_CACHE_TTL
+
+        results = await geocode_search(body.query, body.limit, body.country)
 
         if not results:
             return GeocodeResponse(
                 success=True,
                 results=[],
-                query=body.query
+                query=body.query,
+                cached=was_cached
             )
 
         parsed_results = [parse_nominatim_result(r) for r in results]
@@ -255,7 +512,8 @@ async def geocode(body: GeocodeRequest):
         return GeocodeResponse(
             success=True,
             results=parsed_results,
-            query=body.query
+            query=body.query,
+            cached=was_cached
         )
 
     except httpx.HTTPError as e:
@@ -279,7 +537,7 @@ async def reverse_geocode(body: ReverseGeocodeRequest):
     - 3: Country level
     """
     try:
-        result = await nominatim_reverse(body.lat, body.lng, body.zoom)
+        result = await geocode_reverse(body.lat, body.lng, body.zoom)
 
         if "error" in result:
             raise HTTPException(status_code=404, detail="No address found at these coordinates")
@@ -314,6 +572,7 @@ async def batch_geocode(body: BatchGeocodeRequest, request: Request):
     - Building route waypoints
 
     Max 50 addresses per request. Results maintain input order.
+    Uses concurrent requests with caching for faster processing.
     """
     client_ip = request.client.host if request.client else "unknown"
     if not check_geocode_rate_limit(client_ip):
@@ -322,40 +581,40 @@ async def batch_geocode(body: BatchGeocodeRequest, request: Request):
     if len(body.queries) > 50:
         raise HTTPException(status_code=400, detail="Maximum 50 addresses per batch")
 
-    results = []
-    successful = 0
-    failed = 0
+    async def _geocode_one(query: str) -> BatchGeocodeResult:
+        async with _batch_semaphore:
+            try:
+                search_results = await geocode_search(query, limit=1, country=body.country)
 
-    for query in body.queries:
-        try:
-            search_results = await nominatim_search(query, limit=1, country=body.country)
+                if search_results:
+                    r = search_results[0]
+                    return BatchGeocodeResult(
+                        query=query,
+                        success=True,
+                        lat=float(r["lat"]),
+                        lng=float(r["lon"]),
+                        display_name=r.get("display_name")
+                    )
+                else:
+                    return BatchGeocodeResult(
+                        query=query,
+                        success=False,
+                        error="No results found"
+                    )
 
-            if search_results:
-                r = search_results[0]
-                results.append(BatchGeocodeResult(
-                    query=query,
-                    success=True,
-                    lat=float(r["lat"]),
-                    lng=float(r["lon"]),
-                    display_name=r.get("display_name")
-                ))
-                successful += 1
-            else:
-                results.append(BatchGeocodeResult(
+            except Exception as e:
+                logger.error(f"Batch geocode error for '{query}': {e}")
+                return BatchGeocodeResult(
                     query=query,
                     success=False,
-                    error="No results found"
-                ))
-                failed += 1
+                    error="Geocoding failed"
+                )
 
-        except Exception as e:
-            logger.error(f"Batch geocode error for '{query}': {e}")
-            results.append(BatchGeocodeResult(
-                query=query,
-                success=False,
-                error="Geocoding failed"
-            ))
-            failed += 1
+    results = await asyncio.gather(*[_geocode_one(q) for q in body.queries])
+    results = list(results)
+
+    successful = sum(1 for r in results if r.success)
+    failed = len(results) - successful
 
     return BatchGeocodeResponse(
         success=True,
@@ -497,7 +756,7 @@ async def simple_geocode(
     Returns just the first result's coordinates - perfect for AI agents.
     """
     try:
-        results = await nominatim_search(q, limit=1, country=country)
+        results = await geocode_search(q, limit=1, country=country)
 
         if not results:
             raise HTTPException(status_code=404, detail=f"Could not geocode: {q}")
@@ -514,3 +773,9 @@ async def simple_geocode(
     except Exception as e:
         logger.error(f"Simple geocode error: {e}")
         raise HTTPException(status_code=500, detail="Geocoding failed")
+
+
+@router.get("/geocode/cache-stats")
+async def cache_stats():
+    """View geocode cache statistics. Useful for monitoring."""
+    return get_cache_stats()
