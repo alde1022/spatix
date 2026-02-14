@@ -29,6 +29,9 @@ from api.geocode import router as geocode_router
 from api.nlp_maps import router as nlp_maps_router
 from api.datasets import router as datasets_router
 from api.contributions import router as contributions_router
+from api.normalize import router as normalize_router
+from api.api_keys import router as api_keys_router
+from api.spatial import router as spatial_router
 
 # Environment configuration
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
@@ -143,7 +146,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Delete-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Delete-Token", "X-API-Key"],
 )
 
 # Include map routes
@@ -152,6 +155,9 @@ app.include_router(geocode_router)
 app.include_router(nlp_maps_router)
 app.include_router(datasets_router)
 app.include_router(contributions_router)
+app.include_router(normalize_router)
+app.include_router(api_keys_router)
+app.include_router(spatial_router)
 
 
 def sanitize_for_json(gdf):
