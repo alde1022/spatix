@@ -313,7 +313,7 @@ async def create_map_from_text(
     if not check_rate_limit(client_ip, user_id, user_plan):
         raise HTTPException(
             status_code=429,
-            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+            detail=f"Rate limit exceeded. Max {rate_limit} maps per hour. Try again later."
         )
 
     # Create map
@@ -448,7 +448,7 @@ async def create_map_from_addresses(
     if not check_rate_limit(client_ip, user_id, user_plan):
         raise HTTPException(
             status_code=429,
-            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+            detail=f"Rate limit exceeded. Max {rate_limit} maps per hour. Try again later."
         )
 
     # Create map
@@ -521,7 +521,7 @@ async def create_map_from_addresses(
         id=map_id,
         url=f"{base_url}/m/{map_id}",
         embed=f'<iframe src="{base_url}/m/{map_id}?embed=1" width="600" height="400" frameborder="0"></iframe>',
-        preview_url=f"{base_url}/api/map/{map_id}/preview.png",
+        preview_url=f"{base_url}/m/{map_id}",
         delete_token=delete_token
     )
 
@@ -599,7 +599,7 @@ async def create_route_map(
     if not check_rate_limit(client_ip, user_id, user_plan):
         raise HTTPException(
             status_code=429,
-            detail={"error": "RATE_LIMIT_EXCEEDED", "message": f"Rate limit exceeded. Max {rate_limit} maps per hour.", "retry_after": 3600}
+            detail=f"Rate limit exceeded. Max {rate_limit} maps per hour. Try again later."
         )
 
     # Create map

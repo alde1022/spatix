@@ -8,7 +8,7 @@ POST /api/geocode/reverse - Convert coordinates to address
 POST /api/geocode/batch - Geocode multiple addresses at once
 GET /api/places/search - Search for places/POIs
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import httpx
@@ -21,12 +21,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["geocoding"])
 
+# Per-IP rate limiting for geocode endpoints
+_geocode_ip_requests: Dict[str, List[datetime]] = {}
+GEOCODE_RATE_LIMIT_WINDOW = 60  # 1 minute
+GEOCODE_RATE_LIMIT_MAX = 30  # 30 requests per minute per IP
+
+def check_geocode_rate_limit(ip: str) -> bool:
+    now = datetime.now(timezone.utc)
+    if ip in _geocode_ip_requests:
+        _geocode_ip_requests[ip] = [
+            t for t in _geocode_ip_requests[ip]
+            if (now - t).total_seconds() < GEOCODE_RATE_LIMIT_WINDOW
+        ]
+    else:
+        _geocode_ip_requests[ip] = []
+    if len(_geocode_ip_requests[ip]) >= GEOCODE_RATE_LIMIT_MAX:
+        return False
+    _geocode_ip_requests[ip].append(now)
+    return True
+
 # Nominatim (OpenStreetMap) - free, no API key required
 NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 USER_AGENT = "Spatix/1.0 (https://spatix.io)"
 
 # Rate limiting for Nominatim (max 1 req/sec as per their policy)
 _last_nominatim_request: datetime = None
+_nominatim_lock = asyncio.Lock()
 NOMINATIM_RATE_LIMIT = 1.0  # seconds between requests
 
 
@@ -132,12 +152,13 @@ async def rate_limit_nominatim():
     """Ensure we don't exceed Nominatim's rate limit."""
     global _last_nominatim_request
 
-    if _last_nominatim_request:
-        elapsed = (datetime.now(timezone.utc) - _last_nominatim_request).total_seconds()
-        if elapsed < NOMINATIM_RATE_LIMIT:
-            await asyncio.sleep(NOMINATIM_RATE_LIMIT - elapsed)
+    async with _nominatim_lock:
+        if _last_nominatim_request:
+            elapsed = (datetime.now(timezone.utc) - _last_nominatim_request).total_seconds()
+            if elapsed < NOMINATIM_RATE_LIMIT:
+                await asyncio.sleep(NOMINATIM_RATE_LIMIT - elapsed)
 
-    _last_nominatim_request = datetime.now(timezone.utc)
+        _last_nominatim_request = datetime.now(timezone.utc)
 
 
 async def nominatim_search(query: str, limit: int = 1, country: str = None) -> List[dict]:
@@ -283,7 +304,7 @@ async def reverse_geocode(body: ReverseGeocodeRequest):
 
 
 @router.post("/geocode/batch", response_model=BatchGeocodeResponse)
-async def batch_geocode(body: BatchGeocodeRequest):
+async def batch_geocode(body: BatchGeocodeRequest, request: Request):
     """
     Geocode multiple addresses at once.
 
@@ -294,6 +315,10 @@ async def batch_geocode(body: BatchGeocodeRequest):
 
     Max 50 addresses per request. Results maintain input order.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_geocode_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 30 requests per minute.")
+
     if len(body.queries) > 50:
         raise HTTPException(status_code=400, detail="Maximum 50 addresses per batch")
 
@@ -341,7 +366,7 @@ async def batch_geocode(body: BatchGeocodeRequest):
 
 
 @router.post("/places/search", response_model=PlaceSearchResponse)
-async def search_places(body: PlaceSearchRequest):
+async def search_places(body: PlaceSearchRequest, request: Request):
     """
     Search for places and points of interest.
 
@@ -352,6 +377,10 @@ async def search_places(body: PlaceSearchRequest):
 
     Categories include: amenity, tourism, shop, leisure, building
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_geocode_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 30 requests per minute.")
+
     try:
         # Build search query
         search_query = body.query

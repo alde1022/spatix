@@ -37,7 +37,12 @@ export default function UploadZone({ onFileSelect, file }: UploadZoneProps) {
     (acceptedFiles: File[], rejectedFiles: any[]) => {
       setDragError(null)
       if (rejectedFiles.length > 0) {
-        setDragError("Unsupported file type")
+        const error = rejectedFiles[0]?.errors?.[0]?.code
+        if (error === "file-too-large") {
+          setDragError("File too large. Maximum size is 50MB.")
+        } else {
+          setDragError("Unsupported file type")
+        }
         return
       }
       if (acceptedFiles.length > 0) {
@@ -52,6 +57,7 @@ export default function UploadZone({ onFileSelect, file }: UploadZoneProps) {
     accept: ACCEPT,
     maxFiles: 1,
     multiple: false,
+    maxSize: 50 * 1024 * 1024, // 50MB
   })
 
   return (

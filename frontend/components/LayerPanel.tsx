@@ -42,7 +42,7 @@ const LayerPanel: React.FC<LayerPanelProps> = ({
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 w-80 shadow-lg">
+    <div className="bg-gray-800 rounded-lg p-4 w-80 max-w-[calc(100vw-2rem)] shadow-lg">
       <h3 className="text-white text-lg font-semibold mb-3">Layers</h3>
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="droppable">

@@ -39,7 +39,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title: map.title || "Map",
       description: map.description || "Interactive map created with Spatix",
       type: "website",
-      images: [`https://spatix.io/api/map/${params.id}/preview.png`],
+      images: ["https://spatix.io/opengraph-image"],
     },
     twitter: {
       card: "summary_large_image",

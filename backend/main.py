@@ -48,6 +48,27 @@ if ENVIRONMENT == "development":
         "http://127.0.0.1:8000",
     ])
 
+# Per-IP rate limiting for file upload
+_upload_ip_requests: dict = {}
+UPLOAD_RATE_LIMIT_WINDOW = 60  # 1 minute
+UPLOAD_RATE_LIMIT_MAX = 10  # 10 uploads per minute per IP
+
+def check_upload_rate_limit(ip: str) -> bool:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    if ip in _upload_ip_requests:
+        _upload_ip_requests[ip] = [
+            t for t in _upload_ip_requests[ip]
+            if (now - t).total_seconds() < UPLOAD_RATE_LIMIT_WINDOW
+        ]
+    else:
+        _upload_ip_requests[ip] = []
+    if len(_upload_ip_requests[ip]) >= UPLOAD_RATE_LIMIT_MAX:
+        return False
+    _upload_ip_requests[ip].append(now)
+    return True
+
+
 # Supported formats
 INPUT_FORMATS = {
     '.shp': 'ESRI Shapefile',
@@ -280,10 +301,24 @@ def list_formats():
 
 @app.post("/analyze")
 async def analyze(
+    request: Request,
     file: UploadFile = File(...),
     include_preview: bool = Query(False, description="Include GeoJSON preview")
 ):
     """Analyze a GIS file and return metadata + optional GeoJSON preview."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_upload_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 10 uploads per minute.")
+
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is 50MB, got {len(contents) / 1024 / 1024:.1f}MB."
+        )
+    await file.seek(0)
+
     temp_dir = tempfile.mkdtemp()
     try:
         file_path = save_upload(file, temp_dir)
