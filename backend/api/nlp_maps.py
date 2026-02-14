@@ -13,7 +13,7 @@ from typing import Optional, List, Dict, Any, Literal
 import re
 import logging
 
-from api.geocode import nominatim_search, haversine_distance
+from api.geocode import geocode_search, haversine_distance
 from api.maps import (
     generate_map_id,
     generate_delete_token,
@@ -147,36 +147,37 @@ def extract_locations_from_text(text: str) -> List[str]:
 
 
 async def geocode_locations(locations: List[str]) -> List[Dict[str, Any]]:
-    """Geocode a list of location strings."""
-    results = []
+    """Geocode a list of location strings concurrently."""
+    import asyncio
 
-    for loc in locations:
+    async def _geocode_one(loc: str) -> Dict[str, Any]:
         try:
-            search_results = await nominatim_search(loc, limit=1)
+            search_results = await geocode_search(loc, limit=1)
             if search_results:
                 r = search_results[0]
-                results.append({
+                return {
                     "query": loc,
                     "lat": float(r["lat"]),
                     "lng": float(r["lon"]),
                     "name": r.get("display_name", loc),
                     "success": True
-                })
+                }
             else:
-                results.append({
+                return {
                     "query": loc,
                     "success": False,
                     "error": "Not found"
-                })
+                }
         except Exception as e:
             logger.error(f"Failed to geocode '{loc}': {e}")
-            results.append({
+            return {
                 "query": loc,
                 "success": False,
                 "error": str(e)
-            })
+            }
 
-    return results
+    results = await asyncio.gather(*[_geocode_one(loc) for loc in locations])
+    return list(results)
 
 
 def create_geojson_from_points(points: List[Dict[str, Any]], connect: bool = False) -> Dict[str, Any]:
