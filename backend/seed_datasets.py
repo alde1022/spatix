@@ -210,6 +210,23 @@ SEED_DATASETS = [
         "category": "boundaries",
         "tags": "countries,world,boundaries,political,nations,polygons",
         "data": None,  # Resolved at runtime via download
+        "source_name": "Natural Earth",
+        "source_url": "https://www.naturalearthdata.com/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "Global",
+        "data_date": "2024-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Country name"},
+            {"name": "iso_a3", "type": "string", "description": "ISO 3166-1 alpha-3 code"},
+            {"name": "continent", "type": "string", "description": "Continent"},
+            {"name": "pop_est", "type": "integer", "description": "Estimated population"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
     },
     {
         "id": "ds_us-states",
@@ -219,6 +236,23 @@ SEED_DATASETS = [
         "category": "boundaries",
         "tags": "us,states,boundaries,census,fips,polygons",
         "data": None,  # Resolved at runtime via download
+        "source_name": "Natural Earth / US Census Bureau",
+        "source_url": "https://www.naturalearthdata.com/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "United States",
+        "data_date": "2024-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "State name"},
+            {"name": "abbr", "type": "string", "description": "State abbreviation"},
+            {"name": "fips", "type": "string", "description": "FIPS code"},
+            {"name": "pop", "type": "integer", "description": "Population estimate"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
     },
     {
         "id": "ds_us-national-parks",
@@ -227,6 +261,23 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "environment",
         "tags": "national parks,us,nps,nature,recreation,tourism",
+        "source_name": "National Park Service",
+        "source_url": "https://www.nps.gov/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "United States",
+        "data_date": "2022-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Park name"},
+            {"name": "state", "type": "string", "description": "State(s)"},
+            {"name": "area_sq_mi", "type": "number", "description": "Area in square miles"},
+            {"name": "visitors_2022", "type": "integer", "description": "Annual visitors (2022)"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -255,6 +306,23 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "demographics",
         "tags": "cities,world,population,urban,capitals",
+        "source_name": "United Nations World Urbanization Prospects",
+        "source_url": "https://population.un.org/wup/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "Global",
+        "data_date": "2023-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "City name"},
+            {"name": "country", "type": "string", "description": "Country name"},
+            {"name": "pop", "type": "integer", "description": "Metro area population"},
+            {"name": "capital", "type": "boolean", "description": "Is national capital"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -293,6 +361,24 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "transportation",
         "tags": "airports,us,aviation,transportation,travel",
+        "source_name": "FAA / Bureau of Transportation Statistics",
+        "source_url": "https://www.bts.gov/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "United States",
+        "data_date": "2022-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Airport name"},
+            {"name": "iata", "type": "string", "description": "IATA code"},
+            {"name": "city", "type": "string", "description": "City"},
+            {"name": "state", "type": "string", "description": "State abbreviation"},
+            {"name": "passengers_2022", "type": "integer", "description": "Annual passengers (2022)"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -318,6 +404,23 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "culture",
         "tags": "landmarks,monuments,tourism,culture,world,famous",
+        "source_name": "OpenStreetMap / Wikipedia",
+        "source_url": "https://www.openstreetmap.org/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "Global",
+        "data_date": "2024-01",
+        "update_frequency": "as-needed",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Landmark name"},
+            {"name": "city", "type": "string", "description": "City"},
+            {"name": "country", "type": "string", "description": "Country"},
+            {"name": "type", "type": "string", "description": "Landmark type"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -347,6 +450,23 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "business",
         "tags": "tech,startups,business,silicon valley,innovation,us",
+        "source_name": "Spatix Research",
+        "source_url": "",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "United States",
+        "data_date": "2024-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Hub name"},
+            {"name": "city", "type": "string", "description": "City"},
+            {"name": "state", "type": "string", "description": "State abbreviation"},
+            {"name": "focus", "type": "string", "description": "Technology focus areas"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -372,6 +492,23 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "education",
         "tags": "universities,education,world,rankings,academic",
+        "source_name": "QS World University Rankings",
+        "source_url": "https://www.topuniversities.com/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "Global",
+        "data_date": "2024-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "University name"},
+            {"name": "city", "type": "string", "description": "City"},
+            {"name": "country", "type": "string", "description": "Country"},
+            {"name": "rank_approx", "type": "integer", "description": "Approximate global rank"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -397,6 +534,22 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "transportation",
         "tags": "ports,shipping,trade,logistics,maritime,world",
+        "source_name": "World Shipping Council",
+        "source_url": "https://www.worldshipping.org/",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "Global",
+        "data_date": "2023-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Port name"},
+            {"name": "country", "type": "string", "description": "Country"},
+            {"name": "teu_millions", "type": "number", "description": "TEU throughput in millions"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -422,6 +575,24 @@ SEED_DATASETS = [
         "license": "public-domain",
         "category": "health",
         "tags": "hospitals,health,medical,us,healthcare",
+        "source_name": "US News & World Report",
+        "source_url": "https://health.usnews.com/best-hospitals",
+        "license_type": "public-domain",
+        "attribution_required": False,
+        "commercial_use": True,
+        "region": "United States",
+        "data_date": "2023-01",
+        "update_frequency": "yearly",
+        "schema_def": [
+            {"name": "name", "type": "string", "description": "Hospital name"},
+            {"name": "city", "type": "string", "description": "City"},
+            {"name": "state", "type": "string", "description": "State abbreviation"},
+            {"name": "beds", "type": "integer", "description": "Number of beds"},
+            {"name": "specialty", "type": "string", "description": "Primary specialty"},
+        ],
+        "creator_type": "agent",
+        "creator_id": "spatix-seed",
+        "creator_name": "Spatix Seed",
         "data": {
             "type": "FeatureCollection",
             "features": [
@@ -531,6 +702,20 @@ def seed():
             if gt:
                 geom_types.add(gt)
 
+        # Calculate completeness
+        total_props = set()
+        for f in features:
+            for k in (f.get("properties") or {}).keys():
+                total_props.add(k)
+        if total_props:
+            complete_count = sum(
+                1 for f in features
+                if all((f.get("properties") or {}).get(k) is not None for k in total_props)
+            )
+            completeness = round(complete_count / len(features), 3)
+        else:
+            completeness = 1.0
+
         create_dataset(
             dataset_id=ds["id"],
             title=ds["title"],
@@ -547,7 +732,20 @@ def seed():
             bbox_north=bbox_n,
             file_size_bytes=len(json.dumps(data)),
             uploader_email="seed@spatix.io",
-            agent_name="spatix-seed",
+            agent_name=ds.get("creator_name", "spatix-seed"),
+            source_name=ds.get("source_name"),
+            source_url=ds.get("source_url"),
+            license_type=ds.get("license_type", ds["license"]),
+            attribution_required=ds.get("attribution_required", False),
+            commercial_use=ds.get("commercial_use", True),
+            region=ds.get("region"),
+            data_date=ds.get("data_date"),
+            update_frequency=ds.get("update_frequency"),
+            schema_def=ds.get("schema_def"),
+            completeness=completeness,
+            creator_type=ds.get("creator_type", "agent"),
+            creator_id=ds.get("creator_id", "spatix-seed"),
+            creator_name=ds.get("creator_name", "Spatix Seed"),
         )
 
         geom_info = ",".join(sorted(geom_types))
