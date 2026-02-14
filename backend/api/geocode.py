@@ -261,7 +261,7 @@ async def nominatim_reverse(lat: float, lng: float, zoom: int = 18) -> dict:
 def parse_nominatim_result(result: dict) -> GeocodeResult:
     """Parse a Nominatim result into our format."""
     bbox = None
-    if "boundingbox" in result:
+    if result.get("boundingbox"):
         bb = result["boundingbox"]
         bbox = [float(bb[2]), float(bb[0]), float(bb[3]), float(bb[1])]  # [min_lng, min_lat, max_lng, max_lat]
 
@@ -337,16 +337,18 @@ async def photon_search(query: str, limit: int = 1, country: str = None) -> List
             ext = props["extent"]  # [min_lng, max_lat, max_lng, min_lat]
             bbox = [str(ext[3]), str(ext[1]), str(ext[0]), str(ext[2])]
 
-        results.append({
+        result_dict = {
             "lat": str(coords[1]),
             "lon": str(coords[0]),
             "display_name": display_name,
             "type": props.get("type", props.get("osm_value", "unknown")),
             "category": props.get("osm_key", "place"),
             "importance": 0.5,
-            "boundingbox": bbox,
             "address": address,
-        })
+        }
+        if bbox is not None:
+            result_dict["boundingbox"] = bbox
+        results.append(result_dict)
 
     return results
 
