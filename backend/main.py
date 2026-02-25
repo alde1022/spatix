@@ -442,12 +442,17 @@ async def analyze(
                 result["preview_geojson"] = None
 
         # Auto-publish as dataset if requested
-        if publish and result.get("preview_geojson"):
+        if publish and not gdf.empty:
             try:
                 from api.datasets import generate_dataset_id, validate_geojson, _infer_schema
                 from database import create_dataset as db_create_dataset
 
-                geojson_data = result["preview_geojson"]
+                # Build full GeoJSON from the complete dataset (not the truncated preview)
+                full_gdf = gdf.copy()
+                if full_gdf.crs and str(full_gdf.crs) != "EPSG:4326":
+                    full_gdf = full_gdf.to_crs("EPSG:4326")
+                full_gdf = sanitize_for_json(full_gdf)
+                geojson_data = json.loads(full_gdf.to_json())
                 base_name = os.path.splitext(file.filename or "upload")[0]
                 ds_title = title or base_name.replace("_", " ").replace("-", " ").title()
                 ds_description = description or f"Dataset published from {file.filename or 'uploaded file'} ({result['feature_count']} features)"
