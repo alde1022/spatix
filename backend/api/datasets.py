@@ -897,6 +897,23 @@ async def query_dataset(
     if not ds:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    # Enforce dataset-scoped API key access control
+    if x_api_key:
+        try:
+            from api.api_keys import verify_api_key
+            key_record = verify_api_key(x_api_key)
+        except Exception:
+            key_record = None
+        if not key_record:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        # If the key is scoped to specific datasets, enforce that scope
+        scoped_datasets = key_record.get("dataset_ids") or []
+        if scoped_datasets and dataset_id not in scoped_datasets:
+            raise HTTPException(
+                status_code=403,
+                detail="API key does not have access to this dataset",
+            )
+
     # Track query usage
     increment_dataset_query_count(dataset_id)
     try:
@@ -1037,13 +1054,22 @@ def _coerce_match(fval, val: str) -> bool:
 
 
 def _sort_key(feature: dict, prop: str):
-    """Extract a sortable key from a feature property."""
+    """Extract a sortable key from a feature property.
+
+    Returns a tuple that is always comparable regardless of value types,
+    preventing TypeError when a column contains mixed int/str values.
+    - Numbers: (0, float_value, "")  — sort first, compared as floats
+    - Strings/other: (1, 0, str_value) — sort after numbers
+    - Nulls: (2, 0, "")  — always last
+    """
     val = (feature.get("properties") or {}).get(prop)
     if val is None:
-        return (1, "")  # Nulls last
+        return (2, 0, "")
+    if isinstance(val, bool):
+        return (1, 0, str(val))
     if isinstance(val, (int, float)):
-        return (0, val)
-    return (0, str(val))
+        return (0, float(val), "")
+    return (1, 0, str(val))
 
 
 def _try_award_query_points(ds: dict, dataset_id: str, authorization, x_api_key, request):
