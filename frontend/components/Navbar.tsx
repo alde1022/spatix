@@ -36,6 +36,12 @@ export default function Navbar() {
           Maps
         </Link>
         <Link
+          href="/datasets"
+          className={`text-sm font-medium transition-colors ${isActive('/datasets') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
+        >
+          Datasets
+        </Link>
+        <Link
           href="/developers"
           className={`text-sm font-medium transition-colors ${isActive('/developers') ? 'text-brand-600' : 'text-slate-600 hover:text-slate-900'}`}
         >

@@ -152,18 +152,29 @@ interface UploadError extends Error {
   details?: string | null
 }
 
+interface PublishedDataset {
+  id: string
+  title: string
+  api_url: string
+  data_url: string
+  metadata_url: string
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [selectedExample, setSelectedExample] = useState<typeof exampleMaps[0] | null>(null)
+  const [publishedDataset, setPublishedDataset] = useState<PublishedDataset | null>(null)
+  const [copied, setCopied] = useState(false)
   const router = useRouter()
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile)
     setError(null)
     setErrorDetails(null)
+    setPublishedDataset(null)
     setLoading(true)
 
     try {
@@ -174,9 +185,16 @@ export default function Home() {
       const formData = new FormData()
       formData.append("file", selectedFile)
 
-      const response = await fetch(`${API_URL}/analyze?include_preview=true`, {
+      const token = localStorage.getItem("spatix_token")
+      const headers: Record<string, string> = {}
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+      }
+
+      const response = await fetch(`${API_URL}/analyze?include_preview=true&publish=true`, {
         method: "POST",
         body: formData,
+        headers,
       })
 
       if (!response.ok) {
@@ -195,15 +213,18 @@ export default function Home() {
       }
 
       const data = await response.json()
-      
+
+      // Show published dataset info if available
+      if (data.dataset) {
+        setPublishedDataset(data.dataset)
+      }
+
       if (data.preview_geojson) {
         const baseName = selectedFile.name.replace(/\.[^/.]+$/, "")
         localStorage.setItem('spatix_example_data', JSON.stringify({
           geojson: data.preview_geojson,
           name: baseName
         }))
-        router.push('/maps')
-        return
       } else if (data.error) {
         throw new Error(data.error)
       } else {
@@ -327,10 +348,67 @@ export default function Home() {
           {loading && (
             <div className="mt-6 flex items-center justify-center gap-3 text-slate-600">
               <div className="w-5 h-5 border-2 border-brand-600 border-t-transparent rounded-full animate-spin"></div>
-              Analyzing your data...
+              Publishing your data...
             </div>
           )}
-          
+
+          {publishedDataset && !loading && (
+            <div className="mt-6 p-5 bg-emerald-50 border border-emerald-200 rounded-xl">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-emerald-900 mb-1">Published! Your API is live.</p>
+                  <p className="text-sm text-emerald-700 mb-3">{publishedDataset.title}</p>
+                  <div className="bg-white border border-emerald-200 rounded-lg p-3 mb-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded font-mono font-bold">GET</span>
+                      <span className="text-xs text-slate-500">Query endpoint</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <code className="text-sm text-slate-800 font-mono truncate flex-1">
+                        {API_URL}{publishedDataset.api_url}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${API_URL}${publishedDataset.api_url}`)
+                          setCopied(true)
+                          setTimeout(() => setCopied(false), 2000)
+                        }}
+                        className="px-2 py-1 text-xs bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition-colors shrink-0"
+                      >
+                        {copied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => router.push('/maps')}
+                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
+                    >
+                      View on map
+                    </button>
+                    <Link
+                      href={`/datasets`}
+                      className="px-3 py-1.5 border border-emerald-300 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-100 transition-colors"
+                    >
+                      Manage datasets
+                    </Link>
+                    <button
+                      onClick={() => { setPublishedDataset(null); setFile(null); }}
+                      className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors"
+                    >
+                      Upload another
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl">
               <div className="flex items-start gap-3">
@@ -505,6 +583,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-8 text-sm text-slate-500">
               <Link href="/developers" className="hover:text-slate-700">API</Link>
+              <Link href="/datasets" className="hover:text-slate-700">Datasets</Link>
               <Link href="/maps" className="hover:text-slate-700">Maps</Link>
               <Link href="/login" className="hover:text-slate-700">Log in</Link>
             </div>

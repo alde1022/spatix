@@ -86,6 +86,7 @@ VALID_SCOPES = {
     "normalize",        # Data normalization
     "datasets:read",    # Read/search datasets
     "datasets:write",   # Upload datasets
+    "datasets:query",   # Query specific datasets
     "spatial:query",    # Spatial queries (PostGIS)
 }
 
@@ -102,27 +103,28 @@ def _generate_api_key() -> tuple:
 
 
 def create_api_key(user_id: int, name: str, scopes: list,
-                   rate_limit: int = None) -> dict:
-    """Create a new API key for a user."""
+                   rate_limit: int = None, dataset_ids: list = None) -> dict:
+    """Create a new API key for a user, optionally scoped to specific datasets."""
     ensure_db_initialized()
     import json
 
     full_key, key_hash, prefix = _generate_api_key()
     key_id = secrets.token_urlsafe(12)
     scopes_str = json.dumps(scopes)
+    dataset_ids_str = ",".join(dataset_ids) if dataset_ids else None
 
     with get_db() as conn:
         if USE_POSTGRES:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, scopes, rate_limit)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (key_id, user_id, key_hash, prefix, name, scopes_str, rate_limit))
+                    INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, scopes, rate_limit, dataset_ids)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (key_id, user_id, key_hash, prefix, name, scopes_str, rate_limit, dataset_ids_str))
         else:
             conn.execute("""
-                INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, scopes, rate_limit)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (key_id, user_id, key_hash, prefix, name, scopes_str, rate_limit))
+                INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, scopes, rate_limit, dataset_ids)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (key_id, user_id, key_hash, prefix, name, scopes_str, rate_limit, dataset_ids_str))
 
     return {
         "id": key_id,
@@ -131,6 +133,7 @@ def create_api_key(user_id: int, name: str, scopes: list,
         "prefix": prefix,
         "scopes": scopes,
         "rate_limit": rate_limit,
+        "dataset_ids": dataset_ids,
     }
 
 
@@ -185,7 +188,7 @@ def verify_api_key(key: str) -> dict:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT ak.id, ak.user_id, ak.name, ak.scopes, ak.rate_limit, ak.active,
-                           u.email, u.plan
+                           ak.dataset_ids, u.email, u.plan
                     FROM api_keys ak
                     JOIN users u ON ak.user_id = u.id
                     WHERE ak.key_hash = %s AND ak.active = TRUE
@@ -194,7 +197,7 @@ def verify_api_key(key: str) -> dict:
         else:
             cur = conn.execute("""
                 SELECT ak.id, ak.user_id, ak.name, ak.scopes, ak.rate_limit, ak.active,
-                       u.email, u.plan
+                       ak.dataset_ids, u.email, u.plan
                 FROM api_keys ak
                 JOIN users u ON ak.user_id = u.id
                 WHERE ak.key_hash = ? AND ak.active = 1
@@ -207,6 +210,13 @@ def verify_api_key(key: str) -> dict:
     result = dict(row)
     if isinstance(result.get("scopes"), str):
         result["scopes"] = json.loads(result["scopes"])
+
+    # Parse dataset_ids from comma-separated string
+    ds_ids = result.get("dataset_ids")
+    if ds_ids and isinstance(ds_ids, str):
+        result["dataset_ids"] = [d.strip() for d in ds_ids.split(",") if d.strip()]
+    else:
+        result["dataset_ids"] = None  # None means all datasets
 
     # Update last_used_at and request_count
     _record_key_usage(result["id"], conn if not USE_POSTGRES else None)
@@ -485,3 +495,59 @@ async def key_usage(key_id: str, authorization: str = Header(...)):
         raise HTTPException(status_code=404, detail="API key not found")
 
     return stats
+
+
+# ==================== DATASET-SCOPED CONSUMER KEYS ====================
+
+class CreateDatasetKeyRequest(BaseModel):
+    """Request to create a consumer API key scoped to specific datasets."""
+    name: str = Field(..., min_length=1, max_length=100, description="Name for this consumer key")
+    dataset_ids: List[str] = Field(..., min_items=1, max_items=50, description="Dataset IDs this key can access")
+    rate_limit: Optional[int] = Field(
+        default=100,
+        description="Rate limit in requests/hour for this consumer key"
+    )
+
+
+@router.post("/keys/dataset")
+async def create_dataset_key(body: CreateDatasetKeyRequest, authorization: str = Header(...)):
+    """Create an API key scoped to specific datasets.
+
+    Only the dataset creator can generate consumer keys for their datasets.
+    The key will only have read/query access to the specified datasets.
+    """
+    payload = _require_jwt_auth(authorization)
+    user_id = payload.get("sub")
+    user_email = payload.get("email")
+
+    # Verify the user owns all specified datasets
+    from database import get_dataset as db_get_dataset
+    for ds_id in body.dataset_ids:
+        ds = db_get_dataset(ds_id)
+        if not ds:
+            raise HTTPException(status_code=404, detail=f"Dataset {ds_id} not found")
+        if ds.get("uploader_id") != user_id and ds.get("uploader_email") != user_email:
+            raise HTTPException(status_code=403, detail=f"Not authorized to create keys for dataset {ds_id}")
+
+    # Limit keys per user
+    existing = get_user_api_keys(user_id)
+    if len(existing) >= 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 active API keys per account")
+
+    scopes = ["datasets:read", "datasets:query"]
+    result = create_api_key(
+        user_id, body.name, scopes,
+        rate_limit=body.rate_limit,
+        dataset_ids=body.dataset_ids,
+    )
+
+    return {
+        "id": result["id"],
+        "key": result["key"],
+        "name": result["name"],
+        "prefix": result["prefix"],
+        "scopes": scopes,
+        "dataset_ids": body.dataset_ids,
+        "rate_limit": body.rate_limit,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
