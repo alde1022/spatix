@@ -859,6 +859,238 @@ async def get_dataset_preview(
     }
 
 
+@router.get("/datasets/{dataset_id}/query")
+async def query_dataset(
+    dataset_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    # Property filters: ?where=property_name:operator:value (comma-separated for multiple)
+    where: Optional[str] = Query(default=None, description="Filter: property:op:value (ops: eq,neq,gt,gte,lt,lte,like,in)"),
+    # Bounding box: west,south,east,north
+    bbox: Optional[str] = Query(default=None, description="Bounding box: west,south,east,north"),
+    # Geometry type filter
+    geometry_type: Optional[str] = Query(default=None, description="Filter by geometry type (Point, LineString, Polygon, etc.)"),
+    # Property selection
+    select: Optional[str] = Query(default=None, description="Comma-separated property names to include"),
+    # Pagination
+    limit: int = Query(default=100, ge=1, le=10000),
+    offset: int = Query(default=0, ge=0),
+    # Sort
+    sort_by: Optional[str] = Query(default=None, description="Property name to sort by"),
+    sort_order: Optional[str] = Query(default="asc", pattern="^(asc|desc)$"),
+):
+    """Query features within a dataset with filtering, bbox, and pagination.
+
+    This is the core "instant API" endpoint — every published dataset is
+    automatically queryable via this URL.
+
+    Filter syntax (where parameter):
+      - Single: ?where=rating:gte:4.5
+      - Multiple: ?where=rating:gte:4.0,city:eq:Portland
+      - Operators: eq, neq, gt, gte, lt, lte, like, in
+      - 'in' uses pipe separator: ?where=status:in:active|pending
+
+    Returns a GeoJSON FeatureCollection with _meta pagination info.
+    """
+    ds = db_get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Track query usage
+    increment_dataset_query_count(dataset_id)
+    try:
+        record_dataset_usage(dataset_id=dataset_id, usage_type="query")
+    except Exception:
+        pass
+
+    geojson = ds.get("data", {})
+    if isinstance(geojson, str):
+        geojson = json.loads(geojson)
+
+    features = geojson.get("features", [])
+
+    # --- Apply filters ---
+
+    # Geometry type filter
+    if geometry_type:
+        features = [
+            f for f in features
+            if f.get("geometry", {}).get("type") == geometry_type
+        ]
+
+    # Bounding box filter
+    if bbox:
+        try:
+            parts = [float(x) for x in bbox.split(",")]
+            if len(parts) == 4:
+                w, s, e, n = parts
+                features = [
+                    f for f in features
+                    if _feature_in_bbox(f.get("geometry", {}), w, s, e, n)
+                ]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid bbox format. Expected: west,south,east,north")
+
+    # Property filters
+    if where:
+        for clause in where.split(","):
+            parts = clause.strip().split(":", 2)
+            if len(parts) != 3:
+                raise HTTPException(status_code=400, detail=f"Invalid where clause: '{clause}'. Expected property:operator:value")
+            prop, op, val = parts
+            features = _filter_by_property(features, prop, op, val)
+
+    total_matched = len(features)
+
+    # Sort
+    if sort_by:
+        reverse = sort_order == "desc"
+        features = sorted(
+            features,
+            key=lambda f: _sort_key(f, sort_by),
+            reverse=reverse,
+        )
+
+    # Paginate
+    features = features[offset:offset + limit]
+
+    # Property selection (reduce payload)
+    if select:
+        selected_props = {s.strip() for s in select.split(",")}
+        for f in features:
+            if f.get("properties"):
+                f["properties"] = {
+                    k: v for k, v in f["properties"].items()
+                    if k in selected_props
+                }
+
+    # Award points to creator if requester is authenticated
+    _try_award_query_points(ds, dataset_id, authorization, x_api_key, request)
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "_meta": {
+            "total_features": ds.get("feature_count", 0),
+            "matched": total_matched,
+            "returned": len(features),
+            "offset": offset,
+            "limit": limit,
+            "dataset_id": dataset_id,
+        },
+    }
+
+
+def _filter_by_property(features: list, prop: str, op: str, val: str) -> list:
+    """Filter features by a property condition."""
+    result = []
+    for f in features:
+        props = f.get("properties") or {}
+        fval = props.get(prop)
+        if fval is None:
+            if op == "neq":
+                result.append(f)
+            continue
+
+        try:
+            if op == "eq":
+                if _coerce_match(fval, val):
+                    result.append(f)
+            elif op == "neq":
+                if not _coerce_match(fval, val):
+                    result.append(f)
+            elif op in ("gt", "gte", "lt", "lte"):
+                nfval = float(fval) if not isinstance(fval, (int, float)) else fval
+                nval = float(val)
+                if op == "gt" and nfval > nval:
+                    result.append(f)
+                elif op == "gte" and nfval >= nval:
+                    result.append(f)
+                elif op == "lt" and nfval < nval:
+                    result.append(f)
+                elif op == "lte" and nfval <= nval:
+                    result.append(f)
+            elif op == "like":
+                if val.lower() in str(fval).lower():
+                    result.append(f)
+            elif op == "in":
+                allowed = val.split("|")
+                if str(fval) in allowed:
+                    result.append(f)
+        except (ValueError, TypeError):
+            continue
+
+    return result
+
+
+def _coerce_match(fval, val: str) -> bool:
+    """Check equality with type coercion."""
+    if isinstance(fval, bool):
+        return str(fval).lower() == val.lower()
+    if isinstance(fval, (int, float)):
+        try:
+            return fval == float(val)
+        except ValueError:
+            return str(fval) == val
+    return str(fval) == val
+
+
+def _sort_key(feature: dict, prop: str):
+    """Extract a sortable key from a feature property."""
+    val = (feature.get("properties") or {}).get(prop)
+    if val is None:
+        return (1, "")  # Nulls last
+    if isinstance(val, (int, float)):
+        return (0, val)
+    return (0, str(val))
+
+
+def _try_award_query_points(ds: dict, dataset_id: str, authorization, x_api_key, request):
+    """Award points to dataset creator when requester is authenticated."""
+    authenticated = False
+    if x_api_key:
+        try:
+            from api.api_keys import verify_api_key
+            if verify_api_key(x_api_key):
+                authenticated = True
+        except Exception:
+            pass
+    if not authenticated and authorization and authorization.startswith("Bearer "):
+        try:
+            from routers.auth import verify_jwt
+            payload = verify_jwt(authorization.split(" ")[1])
+            if payload:
+                authenticated = True
+        except Exception:
+            pass
+
+    if not authenticated:
+        return
+
+    try:
+        uploader = get_dataset_uploader_info(dataset_id)
+        if uploader:
+            pts = POINTS_DATASET_SUBSEQUENT_USE * get_points_multiplier(
+                uploader["entity_type"], uploader["entity_id"]
+            )
+            record_contribution(
+                action="dataset_query",
+                resource_type="dataset",
+                resource_id=dataset_id,
+                points_awarded=pts,
+                agent_id=uploader["entity_id"] if uploader["entity_type"] == "agent" else None,
+                user_email=uploader.get("entity_email"),
+                ip_address=request.client.host if request.client else None,
+            )
+            award_points(
+                uploader["entity_type"], uploader["entity_id"], pts,
+                field="data_queries_served", entity_email=uploader.get("entity_email"),
+            )
+    except Exception as e:
+        logger.warning(f"Failed to reward dataset creator for query on {dataset_id}: {e}")
+
+
 class DatasetUpdateRequest(BaseModel):
     """Request to update a dataset's metadata."""
     title: Optional[str] = Field(default=None, max_length=200)

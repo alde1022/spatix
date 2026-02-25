@@ -267,6 +267,9 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
                     CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(active);
 
+                    -- Dataset-scoped API keys: comma-separated dataset IDs (NULL = all datasets)
+                    ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS dataset_ids TEXT;
+
                     -- API key usage log (for per-hour/per-day analytics)
                     CREATE TABLE IF NOT EXISTS api_key_usage (
                         id SERIAL PRIMARY KEY,
@@ -521,7 +524,16 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
                 CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
                 CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(active);
+            """)
 
+            # Dataset-scoped API keys column
+            for col in ["dataset_ids TEXT"]:
+                try:
+                    conn.execute(f"ALTER TABLE api_keys ADD COLUMN {col}")
+                except Exception:
+                    pass
+
+            conn.executescript("""
                 -- API key usage log
                 CREATE TABLE IF NOT EXISTS api_key_usage (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

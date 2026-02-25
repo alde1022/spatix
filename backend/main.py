@@ -309,9 +309,17 @@ def list_formats():
 async def analyze(
     request: Request,
     file: UploadFile = File(...),
-    include_preview: bool = Query(False, description="Include GeoJSON preview")
+    include_preview: bool = Query(False, description="Include GeoJSON preview"),
+    publish: bool = Query(False, description="Auto-publish as a queryable dataset"),
+    title: str = Query(None, description="Dataset title (used when publish=true)"),
+    description: str = Query(None, description="Dataset description (used when publish=true)"),
+    category: str = Query("other", description="Dataset category (used when publish=true)"),
 ):
-    """Analyze a GIS file and return metadata + optional GeoJSON preview."""
+    """Analyze a GIS file and return metadata + optional GeoJSON preview.
+
+    When publish=true, the parsed data is also published as a dataset with an
+    instant query API at /api/datasets/{id}/query.
+    """
     client_ip = request.client.host if request.client else "unknown"
     if not check_upload_rate_limit(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 10 uploads per minute.")
@@ -401,9 +409,9 @@ async def analyze(
                     raise HTTPException(status_code=400, detail=f"CSV needs lat/lng or geometry columns. Found: {list(df.columns)[:10]}")
         else:
             gdf = gpd.read_file(file_path)
-        
+
         file_size = os.path.getsize(file_path)
-        
+
         result = {
             "feature_count": len(gdf),
             "geometry_type": list(gdf.geom_type.unique()),
@@ -412,27 +420,92 @@ async def analyze(
             "attributes": [c for c in gdf.columns if c != 'geometry'],
             "file_size_bytes": file_size
         }
-        
+
         # Add GeoJSON preview if requested
-        if include_preview and not gdf.empty:
+        if (include_preview or publish) and not gdf.empty:
             try:
                 preview_gdf = gdf.copy()
                 if preview_gdf.crs and preview_gdf.crs != 'EPSG:4326':
                     preview_gdf = preview_gdf.to_crs('EPSG:4326')
-                
+
                 # Limit features for large datasets
                 if len(preview_gdf) > 1000:
                     preview_gdf = preview_gdf.head(1000)
-                
+
                 # Simplify geometries
                 preview_gdf['geometry'] = preview_gdf['geometry'].simplify(0.0001)
-                
+
                 preview_gdf = sanitize_for_json(preview_gdf)
                 result["preview_geojson"] = json.loads(preview_gdf.to_json())
             except Exception as e:
                 logger.warning(f"Preview generation failed: {e}")
                 result["preview_geojson"] = None
-        
+
+        # Auto-publish as dataset if requested
+        if publish and result.get("preview_geojson"):
+            try:
+                from api.datasets import generate_dataset_id, validate_geojson, _infer_schema
+                from database import create_dataset as db_create_dataset
+
+                geojson_data = result["preview_geojson"]
+                base_name = os.path.splitext(file.filename or "upload")[0]
+                ds_title = title or base_name.replace("_", " ").replace("-", " ").title()
+                ds_description = description or f"Dataset published from {file.filename or 'uploaded file'} ({result['feature_count']} features)"
+
+                meta = validate_geojson(geojson_data)
+                schema_def = _infer_schema(geojson_data)
+                dataset_id = generate_dataset_id()
+
+                # Get user info if authenticated
+                user_id = None
+                user_email = None
+                auth_header = request.headers.get("authorization", "")
+                if auth_header.startswith("Bearer "):
+                    try:
+                        from routers.auth import verify_jwt
+                        payload = verify_jwt(auth_header.split(" ")[1])
+                        user_id = payload.get("sub")
+                        user_email = payload.get("email")
+                    except Exception:
+                        pass
+
+                db_create_dataset(
+                    dataset_id=dataset_id,
+                    title=ds_title,
+                    description=ds_description,
+                    license="public-domain",
+                    category=category,
+                    tags="",
+                    data=geojson_data,
+                    feature_count=meta["feature_count"],
+                    geometry_types=meta["geometry_types"],
+                    bbox_west=meta["bbox_west"],
+                    bbox_south=meta["bbox_south"],
+                    bbox_east=meta["bbox_east"],
+                    bbox_north=meta["bbox_north"],
+                    file_size_bytes=meta["file_size_bytes"],
+                    uploader_id=user_id,
+                    uploader_email=user_email,
+                    schema_def=schema_def,
+                    completeness=meta["completeness"],
+                    creator_type="user",
+                    creator_id=str(user_id) if user_id else "anonymous",
+                    creator_name="",
+                )
+
+                result["dataset"] = {
+                    "id": dataset_id,
+                    "title": ds_title,
+                    "api_url": f"/api/datasets/{dataset_id}/query",
+                    "data_url": f"/api/datasets/{dataset_id}/data",
+                    "metadata_url": f"/api/datasets/{dataset_id}",
+                }
+                logger.info(f"Auto-published dataset {dataset_id} from file upload ({meta['feature_count']} features)")
+            except Exception as e:
+                logger.warning(f"Auto-publish failed: {e}")
+                result["dataset"] = None
+                result["publish_error"] = str(e)
+
         return JSONResponse(content=result)
     except HTTPException:
         raise
