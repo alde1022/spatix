@@ -240,22 +240,22 @@ export default function Home() {
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-violet-500/15 text-violet-300 rounded-full text-sm font-medium mb-6 border border-violet-500/20">
                 <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-pulse"></span>
-                The fastest way to map data
+                Spatial data infrastructure
               </div>
 
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-[1.1] tracking-tight">
-                Beautiful maps<br />
-                <span className="bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">in seconds</span>
+                Publish spatial data.<br />
+                <span className="bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Get an API instantly.</span>
               </h1>
 
               <p className="text-lg text-slate-400 mb-8 leading-relaxed max-w-lg">
-                Drop your data, style it beautifully, share anywhere. No GIS expertise needed.
-                Perfect for teams, developers, and AI agents.
+                Upload your datasets, get production-ready APIs and interactive maps in seconds.
+                No ArcGIS contracts. No GIS team required. Built for data providers, developers, and AI agents.
               </p>
 
               <div className="flex flex-wrap gap-4 mb-8">
                 <a href="/maps" className="px-6 py-3 bg-violet-600 text-white rounded-xl hover:bg-violet-500 font-medium shadow-lg shadow-violet-600/25 transition-all hover:shadow-xl hover:shadow-violet-500/30">
-                  Create a map — it's free
+                  Publish your data — it's free
                 </a>
                 <Link href="/developers" className="px-6 py-3 border border-white/15 text-slate-300 rounded-xl hover:border-white/30 hover:bg-white/5 font-medium transition-all">
                   View API docs
@@ -267,13 +267,13 @@ export default function Home() {
                   <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  Free to use
+                  No vendor lock-in
                 </div>
                 <div className="flex items-center gap-2">
                   <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  15+ file formats
+                  15+ formats supported
                 </div>
               </div>
             </div>
@@ -302,11 +302,11 @@ export default function Home() {
 
               {/* Floating badges */}
               <div className="absolute -left-4 top-1/4 bg-[#1a1d2e]/90 backdrop-blur-sm rounded-xl shadow-lg px-4 py-3 border border-white/10">
-                <div className="text-xs text-slate-500 mb-1">Processing time</div>
+                <div className="text-xs text-slate-500 mb-1">Data to API</div>
                 <div className="text-lg font-bold text-white">~2 seconds</div>
               </div>
               <div className="absolute -right-4 bottom-1/4 bg-[#1a1d2e]/90 backdrop-blur-sm rounded-xl shadow-lg px-4 py-3 border border-white/10">
-                <div className="text-xs text-slate-500 mb-1">Formats supported</div>
+                <div className="text-xs text-slate-500 mb-1">Ingest formats</div>
                 <div className="text-lg font-bold text-white">15+ types</div>
               </div>
             </div>
@@ -318,8 +318,8 @@ export default function Home() {
       <section id="upload" className="py-20 bg-slate-50">
         <div className="max-w-3xl mx-auto px-6">
           <div className="text-center mb-10">
-            <h2 className="text-3xl font-bold text-slate-900 mb-4">Drop your file to get started</h2>
-            <p className="text-slate-600">GeoJSON, Shapefile, KML, GPX, CSV with coordinates, and more</p>
+            <h2 className="text-3xl font-bold text-slate-900 mb-4">Upload your data, get an API</h2>
+            <p className="text-slate-600">GeoJSON, Shapefile, KML, GPX, CSV with coordinates, and more — instantly queryable</p>
           </div>
           
           <UploadZone onFileSelect={handleFileSelect} file={file} />
@@ -353,7 +353,7 @@ export default function Home() {
         <div className="max-w-5xl mx-auto px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-slate-900 mb-4">See what's possible</h2>
-            <p className="text-slate-600">Every file type becomes a beautiful, shareable map</p>
+            <p className="text-slate-600">Every file type becomes a shareable map and queryable API</p>
           </div>
           
           <div className="grid md:grid-cols-3 gap-6">
@@ -378,59 +378,59 @@ export default function Home() {
       <section className="py-20 bg-slate-900 text-white">
         <div className="max-w-5xl mx-auto px-6">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold mb-4">Why people choose Spatix</h2>
+            <h2 className="text-3xl font-bold mb-4">Why data teams choose Spatix</h2>
             <p className="text-slate-400 max-w-2xl mx-auto">
-              Simpler than Kepler, more powerful than basic tools. Built for speed.
+              Skip the enterprise GIS contracts. Publish spatial data APIs in minutes, not months.
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             <div className="p-6 rounded-2xl bg-slate-800/50 border border-slate-700">
               <div className="w-12 h-12 bg-brand-600 rounded-xl flex items-center justify-center mb-4">
                 <span className="text-2xl">⚡</span>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Instant processing</h3>
-              <p className="text-slate-400 text-sm">Most files render in under 2 seconds. No waiting, no loading bars.</p>
+              <h3 className="font-semibold text-lg mb-2">Instant APIs</h3>
+              <p className="text-slate-400 text-sm">Upload any spatial dataset, get a RESTful API endpoint in seconds. No provisioning, no config.</p>
             </div>
-            
+
             <div className="p-6 rounded-2xl bg-slate-800/50 border border-slate-700">
               <div className="w-12 h-12 bg-violet-600 rounded-xl flex items-center justify-center mb-4">
                 <span className="text-2xl">🤖</span>
               </div>
-              <h3 className="font-semibold text-lg mb-2">AI-native API</h3>
-              <p className="text-slate-400 text-sm">One POST request creates a shareable map. Perfect for agents and automation.</p>
+              <h3 className="font-semibold text-lg mb-2">Agent-ready</h3>
+              <p className="text-slate-400 text-sm">One POST from any AI agent or pipeline. Built for the LLM era — spatial data your agents can actually use.</p>
             </div>
-            
+
             <div className="p-6 rounded-2xl bg-slate-800/50 border border-slate-700">
               <div className="w-12 h-12 bg-emerald-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-2xl">🎨</span>
+                <span className="text-2xl">🔓</span>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Beautiful defaults</h3>
-              <p className="text-slate-400 text-sm">Smart color palettes and styles that make your data look great immediately.</p>
+              <h3 className="font-semibold text-lg mb-2">No gatekeepers</h3>
+              <p className="text-slate-400 text-sm">Skip the ArcGIS contracts and enterprise sales cycles. Publish your data on your terms.</p>
             </div>
-            
+
             <div className="p-6 rounded-2xl bg-slate-800/50 border border-slate-700">
               <div className="w-12 h-12 bg-amber-600 rounded-xl flex items-center justify-center mb-4">
                 <span className="text-2xl">📂</span>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Any format</h3>
-              <p className="text-slate-400 text-sm">GeoJSON, Shapefile, KML, GPX, GML, DXF, CSV, and more. We handle the conversion.</p>
+              <h3 className="font-semibold text-lg mb-2">Any format in</h3>
+              <p className="text-slate-400 text-sm">GeoJSON, Shapefile, KML, GPX, CSV, and 10+ more. We normalize everything to clean, queryable APIs.</p>
             </div>
-            
+
             <div className="p-6 rounded-2xl bg-slate-800/50 border border-slate-700">
               <div className="w-12 h-12 bg-rose-600 rounded-xl flex items-center justify-center mb-4">
                 <span className="text-2xl">🔗</span>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Shareable URLs</h3>
-              <p className="text-slate-400 text-sm">Every map gets a unique URL. Embed anywhere with iframes.</p>
+              <h3 className="font-semibold text-lg mb-2">Share & embed</h3>
+              <p className="text-slate-400 text-sm">Every dataset gets a shareable URL and embeddable map. Visualize without extra tooling.</p>
             </div>
-            
+
             <div className="p-6 rounded-2xl bg-slate-800/50 border border-slate-700">
               <div className="w-12 h-12 bg-cyan-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-2xl">🌐</span>
+                <span className="text-2xl">📊</span>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Multiple basemaps</h3>
-              <p className="text-slate-400 text-sm">Street, satellite, terrain, dark mode. Switch with one click.</p>
+              <h3 className="font-semibold text-lg mb-2">Built to monetize</h3>
+              <p className="text-slate-400 text-sm">Metered API access, usage analytics, and billing infrastructure for your spatial data. Coming soon.</p>
             </div>
           </div>
         </div>
@@ -446,8 +446,8 @@ export default function Home() {
               </div>
               <h2 className="text-3xl font-bold text-slate-900 mb-4">Build with our API</h2>
               <p className="text-slate-600 mb-6">
-                Create maps programmatically. Perfect for AI agents, data pipelines, and custom integrations.
-                One API call = shareable map.
+                Publish and consume spatial data programmatically. Perfect for AI agents, data pipelines,
+                and anyone tired of GIS vendor lock-in. One API call = shareable map.
               </p>
               <Link href="/developers" className="inline-flex items-center gap-2 text-brand-600 hover:text-brand-700 font-medium">
                 Read the docs <span>→</span>
@@ -485,10 +485,10 @@ export default function Home() {
       {/* CTA Section */}
       <section className="py-20 bg-brand-600">
         <div className="max-w-3xl mx-auto px-6 text-center">
-          <h2 className="text-3xl font-bold text-white mb-4">Ready to map your data?</h2>
-          <p className="text-brand-100 mb-8 text-lg">Upload, style, and share — completely free.</p>
+          <h2 className="text-3xl font-bold text-white mb-4">Ready to publish your spatial data?</h2>
+          <p className="text-brand-100 mb-8 text-lg">Upload, get an API, share a map — completely free.</p>
           <a href="/maps" className="inline-block px-8 py-4 bg-white text-brand-600 rounded-xl font-semibold hover:bg-brand-50 transition-colors shadow-lg">
-            Create your first map
+            Get started free
           </a>
         </div>
       </section>
